@@ -547,7 +547,9 @@ def _generate_clip_metadata(text: str) -> dict:
             meta = json.loads(data.get("response", "{}"))
             title_val = str(meta.get("title") or "")
             caption_val = str(meta.get("caption") or "")
-            hashtags_val = str(meta.get("hashtags") or "")
+            hashtags_raw = meta.get("hashtags") or ""
+            hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
+            hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
             return {
                 "title": title_val[:100] if title_val else "Generated Clip",
                 "caption": caption_val[:500] if caption_val else text[:500],
@@ -603,7 +605,9 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
             hook = hook[:80]
         title_val = str(r.get("title") or "")
         caption_val = str(r.get("caption") or "")
-        hashtags_val = str(r.get("hashtags") or "")
+        hashtags_raw = r.get("hashtags") or ""
+        hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
+        hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
         
         metadata = {
             "title": title_val[:100] if title_val else "Generated Clip",

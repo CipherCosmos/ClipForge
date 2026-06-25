@@ -10,20 +10,62 @@ from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
 from app.services.storage import download_file
 from app.services.transcription import transcribe_audio
 from app.workers.celery_app import SyncSessionLocal, celery_app
+import threading
+import time
+import subprocess
 
 logger = logging.getLogger(__name__)
+
+class TranscriptionProgressThread(threading.Thread):
+    def __init__(self, video_id: str, audio_path: str):
+        super().__init__()
+        self.video_id = video_id
+        self.audio_path = audio_path
+        self.stop_event = threading.Event()
+        self.duration_sec = self._get_duration()
+
+    def _get_duration(self) -> float:
+        try:
+            res = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path],
+                capture_output=True, text=True, timeout=10
+            )
+            return float(res.stdout.strip())
+        except Exception:
+            return 300.0
+
+    def run(self):
+        # MLX Whisper transcribes roughly 20x real-time on Apple Silicon
+        est_duration = max(15.0, self.duration_sec / 20.0)
+        start_time = time.time()
+        
+        while not self.stop_event.is_set():
+            elapsed = time.time() - start_time
+            if elapsed < est_duration:
+                p = 0.1 + 0.8 * (elapsed / est_duration)
+            else:
+                p = 0.9
+            
+            p = round(p, 3)
+            try:
+                broadcast_sync(self.video_id, "transcription", p, "running", f"Transcribing audio ({int(p*100)}%)")
+            except Exception:
+                pass
+                
+            self.stop_event.wait(1.5)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True)
 def run_transcription(self, video_id: str):
     session = SyncSessionLocal()
+    tmp_path = None
     try:
         video_uuid = uuid.UUID(video_id)
         video = session.query(Video).filter(Video.id == video_uuid).first()
         if not video:
             raise ValueError(f"Video {video_id} not found")
 
-        job = (
+        trans_job = (
             session.query(Job)
             .filter(
                 and_(
@@ -34,25 +76,40 @@ def run_transcription(self, video_id: str):
             .first()
         )
 
-        if job:
-            job.status = JobStatusEnum.RUNNING
-            job.progress = 0.0
+        vid_status = VideoStatusEnum.PROCESSING
+        if trans_job:
+            trans_job.status = JobStatusEnum.RUNNING
+            trans_job.progress = 0.0
 
-        video.status = VideoStatusEnum.PROCESSING
+        video.status = vid_status
         session.commit()
 
-        tmp_path = None
-        try:
+        # ── Smart Resume: skip if TRANSCRIPTION already DONE ──
+        transcription_skipped = False
+        if trans_job and trans_job.status == JobStatusEnum.DONE:
+            transcription_skipped = True
+            logger.info("Smart Resume: transcription already complete for video %s, skipping", video_id)
+        else:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp_path = tmp.name
 
             logger.info("Downloading video %s for transcription", video_id)
+            broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading media")
             download_file(video.source_url, tmp_path)
 
             logger.info("Starting transcription for video %s", video_id)
-            broadcast_sync(video_id, "transcription", 0.1, "running", "Running Whisper ASR")
-            result = transcribe_audio(tmp_path)
-            broadcast_sync(video_id, "transcription", 0.5, "running", "Processing segments")
+            broadcast_sync(video_id, "transcription", 0.1, "running", "Warming up Whisper ASR")
+            
+            progress_thread = TranscriptionProgressThread(video_id, tmp_path)
+            progress_thread.start()
+
+            try:
+                result = transcribe_audio(tmp_path)
+            finally:
+                progress_thread.stop_event.set()
+                progress_thread.join()
+                
+            broadcast_sync(video_id, "transcription", 0.95, "running", "Chunking segments")
             whisper_segments = result["segments"]
             language = result.get("language", "en")
 
@@ -135,25 +192,43 @@ def run_transcription(self, video_id: str):
             video.segments = segments
             broadcast_sync(video_id, "transcription", 1.0, "completed", f"Transcription complete in {language}")
 
-            if job:
-                job.progress = 1.0
-                job.status = JobStatusEnum.DONE
+            if trans_job:
+                trans_job.progress = 1.0
+                trans_job.status = JobStatusEnum.DONE
 
             session.commit()
             logger.info("Transcription complete for video %s", video_id)
 
+        # ── Smart Resume: route to next stage based on HIGHLIGHT job status ──
+        highlight_job = (
+            session.query(Job)
+            .filter(
+                and_(
+                    Job.video_id == video_uuid,
+                    Job.type == JobTypeEnum.HIGHLIGHT,
+                )
+            )
+            .first()
+        )
+
+        should_skip_highlight = highlight_job and highlight_job.status == JobStatusEnum.DONE
+
+        if should_skip_highlight:
+            logger.info("Smart Resume: highlights already complete for video %s, skipping to render", video_id)
+            from app.workers.render import run_render
+            run_render.delay(video_id)
+        else:
+            if highlight_job and highlight_job.status == JobStatusEnum.QUEUED:
+                logger.info("Smart Resume: highlights queued for video %s, starting NLP + Scene Detect", video_id)
+            else:
+                logger.info("Smart Resume: highlight job status=%s for video %s, defaulting to NLP + Scene Detect",
+                            highlight_job.status if highlight_job else "None", video_id)
             from celery import chord
             from app.workers.nlp import run_nlp
             from app.workers.scene_detect import run_scene_detect
             from app.workers.join_worker import run_join_and_render
 
             chord([run_nlp.s(video_id), run_scene_detect.s(video_id)])(run_join_and_render.s(video_id))
-
-        except Exception:
-            raise
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
 
     except Exception as exc:
         logger.exception("Transcription failed for video %s", video_id)
@@ -178,4 +253,6 @@ def run_transcription(self, video_id: str):
             session.rollback()
         raise self.retry(exc=exc)
     finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
         session.close()

@@ -178,7 +178,6 @@ def run_nlp(self, video_id: str):
         )
         if job:
             job.status = JobStatusEnum.RUNNING
-            job.progress = 0.0
             session.commit()
 
         trending = fetch_trending_keywords()
@@ -222,6 +221,7 @@ def run_nlp(self, video_id: str):
         llm_total = len(llm_candidates)
         logger.info("Running Ollama LLM scoring on %d of %d segments", llm_total, total)
 
+        last_progress = 0.0
         for batch_start in range(0, llm_total, BATCH_SIZE):
             batch_candidates = llm_candidates[batch_start:batch_start + BATCH_SIZE]
             batch_segments = [segments[idx] for idx, _ in batch_candidates]
@@ -241,11 +241,11 @@ def run_nlp(self, video_id: str):
             job_progress = done / max(llm_total, 1)
             broadcast_sync(video_id, "nlp", job_progress, "running", f"Scored {done}/{llm_total} candidates")
             if job:
-                job.progress = job_progress
+                delta = (job_progress - last_progress) * 0.4
+                last_progress = job_progress
+                from sqlalchemy import update, func
+                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
                 session.commit()
-
-        if job:
-            job.progress = 1.0
 
         session.commit()
         logger.info("NLP scoring complete for video %s", video_id)

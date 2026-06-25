@@ -89,8 +89,9 @@ class TestTranscriptionStep:
             video.status = VideoStatusEnum.PROCESSING
 
             session.query.return_value.filter.return_value.first.side_effect = [
-                video,  # First query: video
-                None,   # Second query: job (no job)
+                video,  # Query: video
+                None,   # Query: trans_job (no job)
+                None,   # Query: highlight_job (no job)
             ]
 
             # Prevent the downstream chain call from failing
@@ -333,7 +334,7 @@ class TestPipelineChain:
             video.transcript = None
 
             session.query.return_value.filter.return_value.first.side_effect = [
-                video, None
+                video, None, None
             ]
 
             mock_ta.return_value = {

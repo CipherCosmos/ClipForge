@@ -31,9 +31,18 @@ def _video_to_response(video: Video) -> VideoResponse:
 
         session = SyncSessionLocal()
         try:
-            job = session.query(Job).filter(Job.video_id == video.id).order_by(Job.created_at.desc()).first()
-            if job and job.progress is not None:
-                resp.progress = min(job.progress * 100, 99.0)
+            jobs = session.query(Job).filter(Job.video_id == video.id).all()
+            if jobs:
+                overall = 0.0
+                for j in jobs:
+                    p = j.progress or 0.0
+                    if j.type == JobTypeEnum.TRANSCRIPTION:
+                        overall += p * 30.0
+                    elif j.type == JobTypeEnum.HIGHLIGHT:
+                        overall += p * 50.0
+                    elif j.type == JobTypeEnum.RENDER:
+                        overall += p * 20.0
+                resp.progress = min(overall, 99.0)
         finally:
             session.close()
     except Exception:
@@ -77,12 +86,10 @@ async def upload_video(
     await db.commit()
     await db.refresh(video)
 
-    job = Job(
-        video_id=video.id,
-        type=JobTypeEnum.TRANSCRIPTION,
-        status=JobStatusEnum.QUEUED,
-    )
-    db.add(job)
+    job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
+    job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
+    job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
+    db.add_all([job1, job2, job3])
     await db.commit()
     await db.refresh(video)
 
@@ -131,12 +138,10 @@ async def import_video(
     await db.commit()
     await db.refresh(video)
 
-    job = Job(
-        video_id=video.id,
-        type=JobTypeEnum.TRANSCRIPTION,
-        status=JobStatusEnum.QUEUED,
-    )
-    db.add(job)
+    job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
+    job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
+    job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
+    db.add_all([job1, job2, job3])
     await db.commit()
     await db.refresh(video)
 
@@ -206,17 +211,38 @@ async def reprocess_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     from app.models.clip import Clip
+    
+    has_transcription = bool(video.transcript and video.segments and len(video.segments) > 0)
+    has_highlights = False
+    if has_transcription:
+        first_seg = video.segments[0]
+        if isinstance(first_seg, dict) and "hook_score" in first_seg and "scene_change_intensity" in first_seg:
+            has_highlights = True
+
     await db.execute(delete(Clip).where(Clip.video_id == video_id))
     await db.execute(delete(Job).where(Job.video_id == video_id))
     
     video.status = VideoStatusEnum.UPLOADED
     
-    job = Job(
-        video_id=video.id,
-        type=JobTypeEnum.TRANSCRIPTION,
-        status=JobStatusEnum.QUEUED,
+    job1 = Job(
+        video_id=video.id, 
+        type=JobTypeEnum.TRANSCRIPTION, 
+        status=JobStatusEnum.DONE if has_transcription else JobStatusEnum.QUEUED,
+        progress=1.0 if has_transcription else 0.0
     )
-    db.add(job)
+    job2 = Job(
+        video_id=video.id, 
+        type=JobTypeEnum.HIGHLIGHT, 
+        status=JobStatusEnum.DONE if has_highlights else JobStatusEnum.QUEUED,
+        progress=1.0 if has_highlights else 0.0
+    )
+    job3 = Job(
+        video_id=video.id, 
+        type=JobTypeEnum.RENDER, 
+        status=JobStatusEnum.QUEUED,
+        progress=0.0
+    )
+    db.add_all([job1, job2, job3])
     await db.commit()
     await db.refresh(video)
     

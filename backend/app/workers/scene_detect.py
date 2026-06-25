@@ -111,7 +111,6 @@ def run_scene_detect(self, video_id: str):
         )
         if job:
             job.status = JobStatusEnum.RUNNING
-            job.progress = 0.3
             session.commit()
 
         segments = video.segments
@@ -177,6 +176,7 @@ def run_scene_detect(self, video_id: str):
         # Map emotion + events + prosody per segment
         total = len(segments)
         last_broadcast = -1
+        last_progress = 0.0
         for idx, seg in enumerate(segments):
             seg_start = seg["start"]
             seg_end = seg["end"]
@@ -217,16 +217,19 @@ def run_scene_detect(self, video_id: str):
             seg["viral_score"] *= seg.get("trend_boost", 1.0)
 
             if job:
-                progress = 0.5 + (0.4 * (idx + 1) / total)
-                job.progress = progress
+                job_progress = (idx + 1) / max(total, 1)
+                delta = (job_progress - last_progress) * 0.6
+                last_progress = job_progress
+                from sqlalchemy import update, func
+                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
                 session.commit()
-                pct = int((idx + 1) / total * 100)
+                pct = int(job_progress * 100)
                 if pct > last_broadcast:
                     last_broadcast = pct
-                    broadcast_sync(video_id, "scene_detect", progress, "running", f"Analyzed {idx + 1}/{total} segments")
+                    # Web UI expects progress 0 to 1 mapping from 0.5 to 1.0 for scene_detect
+                    ws_progress = 0.5 + (0.5 * job_progress)
+                    broadcast_sync(video_id, "scene_detect", ws_progress, "running", f"Analyzed {idx + 1}/{total} segments")
 
-        if job:
-            job.progress = 0.9
         session.commit()
 
         logger.info("Scene detection + audio analysis complete for video %s", video_id)
