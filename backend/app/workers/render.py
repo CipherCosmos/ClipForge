@@ -551,13 +551,13 @@ def _generate_clip_metadata(text: str) -> dict:
             hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
             hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
             return {
-                "title": title_val[:100] if title_val else "Generated Clip",
+                "title": title_val[:100] if title_val else "",
                 "caption": caption_val[:500] if caption_val else text[:500],
                 "hashtags": hashtags_val if hashtags_val else "#viral",
             }
     except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
         logger.warning("Metadata generation failed: %s", exc)
-        return {"title": "Generated Clip", "caption": text[:500], "hashtags": "#viral"}
+        return {"title": "", "caption": text[:500], "hashtags": "#viral"}
 
 
 def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:

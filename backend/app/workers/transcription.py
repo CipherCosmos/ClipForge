@@ -76,20 +76,18 @@ def run_transcription(self, video_id: str):
             .first()
         )
 
-        vid_status = VideoStatusEnum.PROCESSING
-        if trans_job:
-            trans_job.status = JobStatusEnum.RUNNING
-            trans_job.progress = 0.0
+        # ── Smart Resume: check status BEFORE updating ──
+        transcription_skipped = trans_job and trans_job.status == JobStatusEnum.DONE
 
-        video.status = vid_status
-        session.commit()
+        video.status = VideoStatusEnum.PROCESSING
 
-        # ── Smart Resume: skip if TRANSCRIPTION already DONE ──
-        transcription_skipped = False
-        if trans_job and trans_job.status == JobStatusEnum.DONE:
-            transcription_skipped = True
-            logger.info("Smart Resume: transcription already complete for video %s, skipping", video_id)
-        else:
+        if not transcription_skipped:
+            if trans_job:
+                trans_job.status = JobStatusEnum.RUNNING
+                trans_job.progress = 0.0
+
+            session.commit()
+
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
                 tmp_path = tmp.name
 
@@ -198,6 +196,9 @@ def run_transcription(self, video_id: str):
 
             session.commit()
             logger.info("Transcription complete for video %s", video_id)
+        else:
+            session.commit()
+            logger.info("Smart Resume: transcription already complete for video %s, skipping", video_id)
 
         # ── Smart Resume: route to next stage based on HIGHLIGHT job status ──
         highlight_job = (
