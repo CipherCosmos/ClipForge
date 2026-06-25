@@ -35,16 +35,27 @@ function scoreLabel(score: number): string {
 }
 
 export function ClipCard({ clip }: ClipCardProps) {
-  const [copied, setCopied] = useState(false)
+  const [copiedDesc, setCopiedDesc] = useState(false)
+  const [copiedTags, setCopiedTags] = useState(false)
   const [videoError, setVideoError] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const dur = clip.end_time - clip.start_time
 
-  const handleCopy = async () => {
+  const handleCopyDesc = async () => {
     try {
       await navigator.clipboard.writeText(clip.caption)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setCopiedDesc(true)
+      setTimeout(() => setCopiedDesc(false), 2000)
+    } catch {}
+  }
+
+  const handleCopyTags = async () => {
+    try {
+      if (!clip.hashtags) return
+      const rawTags = clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).map(t => (t.startsWith("#") ? t : `#${t}`)).join(" ")
+      await navigator.clipboard.writeText(rawTags)
+      setCopiedTags(true)
+      setTimeout(() => setCopiedTags(false), 2000)
     } catch {}
   }
 
@@ -67,7 +78,7 @@ export function ClipCard({ clip }: ClipCardProps) {
 
   return (
     <div className="card group animate-scale-in overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-black/5">
-      <div className="relative aspect-video overflow-hidden bg-slate-900">
+      <div className="relative overflow-hidden bg-slate-900 flex items-center justify-center min-h-[200px]">
         {clip.file_url && !videoError ? (
           <video
             ref={videoRef}
@@ -75,7 +86,7 @@ export function ClipCard({ clip }: ClipCardProps) {
             poster={clip.thumbnail_url || undefined}
             controls
             preload="metadata"
-            className="absolute inset-0 h-full w-full object-cover"
+            className="w-full h-auto max-h-[500px] object-contain"
             onError={() => setVideoError(true)}
           >
             Your browser does not support video playback.
@@ -85,69 +96,87 @@ export function ClipCard({ clip }: ClipCardProps) {
             <Film size={32} className="text-slate-700" />
           </div>
         )}
-        <div className="absolute bottom-2 left-2 flex gap-1.5">
-          <span className={cn("badge border text-[11px] font-semibold", scoreColor(clip.score))}>
+        <div className="absolute bottom-2 left-2 flex gap-1.5 z-10 pointer-events-none">
+          <span className={cn("badge border text-[11px] font-semibold bg-black/60 backdrop-blur-md", scoreColor(clip.score))}>
             <TrendingUp size={12} className="mr-1" />
             {scoreLabel(clip.score)} &middot; {(clip.score * 100).toFixed(0)}
           </span>
-          <span className="badge-slate gap-1 text-[11px]">
+          <span className="badge-slate gap-1 text-[11px] bg-black/60 backdrop-blur-md text-white border border-white/10">
             <Clock size={12} />
             {formatDuration(dur)}
           </span>
         </div>
       </div>
 
-      <div className="space-y-3 p-4">
+      <div className="space-y-4 p-4">
         {clip.title && (
-          <p className="text-sm font-semibold leading-snug text-slate-100">
+          <p className="text-base font-bold leading-snug text-slate-100">
             {clip.title}
           </p>
         )}
+
         {clip.caption && (
-          <p className="line-clamp-2 text-xs leading-relaxed text-slate-400">
-            {clip.caption}
-          </p>
-        )}
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownload}
-            className="btn-primary flex-1 text-xs"
-          >
-            <Download size={14} />
-            Download
-          </button>
-          <button
-            onClick={handleCopy}
-            className={cn(
-              "btn-secondary px-3 text-xs",
-              copied && "border-emerald-700 bg-emerald-900/20 text-emerald-400"
-            )}
-          >
-            {copied ? <Check size={14} /> : <Copy size={14} />}
-          </button>
-        </div>
-
-        {clip.hashtags && clip.hashtags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).slice(0, 5).map((tag) => {
-              const clean = tag.replace("#", "")
-              return (
-                <span
-                  key={tag}
-                  className="inline-flex items-center gap-0.5 rounded-md bg-brand-900/15 px-1.5 py-0.5 text-[10px] text-brand-400/70"
-                >
-                  <Hash size={10} />
-                  {clean}
-                </span>
-              )
-            })}
-            {clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).length > 5 && (
-              <span className="text-[10px] text-slate-600">+{clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).length - 5}</span>
-            )}
+          <div className="rounded-lg bg-slate-800/40 p-3 border border-slate-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Description</span>
+              <button
+                onClick={handleCopyDesc}
+                className={cn(
+                  "p-1.5 rounded-md transition-colors",
+                  copiedDesc ? "bg-emerald-900/30 text-emerald-400" : "bg-slate-700 hover:bg-slate-600 text-slate-300"
+                )}
+                title="Copy Description"
+              >
+                {copiedDesc ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+            <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
+              {clip.caption}
+            </p>
           </div>
         )}
+
+        {clip.hashtags && clip.hashtags.length > 0 && (
+          <div className="rounded-lg bg-slate-800/40 p-3 border border-slate-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Viral Tags</span>
+              <button
+                onClick={handleCopyTags}
+                className={cn(
+                  "p-1.5 rounded-md transition-colors",
+                  copiedTags ? "bg-emerald-900/30 text-emerald-400" : "bg-slate-700 hover:bg-slate-600 text-slate-300"
+                )}
+                title="Copy Tags"
+              >
+                {copiedTags ? <Check size={14} /> : <Copy size={14} />}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).map((tag) => {
+                const clean = tag.replace("#", "")
+                return (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 rounded-md bg-brand-900/15 px-2 py-1 text-xs text-brand-400/80 border border-brand-800/30"
+                  >
+                    <Hash size={12} />
+                    {clean}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={handleDownload}
+          className="btn-primary w-full py-2.5 mt-2 shadow-lg shadow-brand-500/20"
+        >
+          <Download size={16} className="mr-2" />
+          Download Video
+        </button>
       </div>
     </div>
   )
 }
+

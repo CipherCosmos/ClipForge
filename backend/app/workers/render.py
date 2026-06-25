@@ -104,14 +104,14 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
 
     candidates = []
     
-    # 1. Generate all consecutive segment windows that are between 10s and 60s
+    # 1. Generate all consecutive segment windows that are between 30s and 90s
     for i in range(len(segments)):
         for j in range(i, len(segments)):
             start_time = segments[i]["start"]
             end_time = segments[j]["end"]
             duration = end_time - start_time
             
-            if 10.0 <= duration <= 60.0:
+            if 30.0 <= duration <= 90.0:
                 # Calculate average viral score for the segments in this window
                 window_segs = segments[i:j+1]
                 avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
@@ -125,12 +125,35 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
                     "viral_score": avg_score,
                     "segment_indices": set(range(i, j+1))
                 })
-            elif duration > 60.0:
+            elif duration > 90.0:
                 break
 
-    # If no candidate windows fall in the 10s-60s range, fallback to single segments
+    # If no candidate windows fall in the 30s-90s range, fallback to 15s-90s
     if not candidates:
-        logger.warning("No multi-segment windows of 10s-60s found, falling back to raw segments.")
+        logger.warning("No multi-segment windows of 30s-90s found, falling back to 15s-90s.")
+        for i in range(len(segments)):
+            for j in range(i, len(segments)):
+                start_time = segments[i]["start"]
+                end_time = segments[j]["end"]
+                duration = end_time - start_time
+                
+                if 15.0 <= duration <= 90.0:
+                    window_segs = segments[i:j+1]
+                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
+                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
+                    candidates.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "text": joined_text,
+                        "viral_score": avg_score,
+                        "segment_indices": set(range(i, j+1))
+                    })
+                elif duration > 90.0:
+                    break
+
+    # If still no candidates, fallback to raw segments
+    if not candidates:
+        logger.warning("No multi-segment windows found, falling back to raw segments.")
         scored = [s for s in segments if s.get("viral_score", 0) > 0]
         scored.sort(key=lambda s: s["viral_score"], reverse=True)
         return scored[:n]
