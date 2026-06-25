@@ -166,6 +166,10 @@ def run_nlp(self, video_id: str):
             run_scene_detect.delay(video_id)
             return
 
+        # ── Smart Resume: skip if segments already have Ollama scores ──
+        scored_segments = [s for s in segments if isinstance(s, dict) and s.get("hook_score", 0) > 0]
+        has_llm_scores = len(scored_segments) >= max(1, len(segments) // 2)
+
         job = (
             session.query(Job)
             .filter(
@@ -176,6 +180,15 @@ def run_nlp(self, video_id: str):
             )
             .first()
         )
+
+        if has_llm_scores:
+            logger.info("Smart Resume: %d/%d segments already have LLM scores, skipping NLP", len(scored_segments), len(segments))
+            if job and job.status == JobStatusEnum.QUEUED:
+                job.status = JobStatusEnum.DONE
+                job.progress = 1.0
+                session.commit()
+            return segments
+
         if job:
             job.status = JobStatusEnum.RUNNING
             session.commit()

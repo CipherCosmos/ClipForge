@@ -868,6 +868,11 @@ def run_render(self, video_id: str):
 
         preset = get_preset(video.platform or "youtube_shorts")
 
+        # ── Smart Resume: skip if clips already exist (previous run completed) ──
+        from app.models.clip import Clip
+        existing_clips = session.query(Clip).filter(Clip.video_id == video_uuid).count()
+        render_done = existing_clips > 0 and job and job.status == JobStatusEnum.DONE
+
         job = (
             session.query(Job)
             .filter(
@@ -878,6 +883,11 @@ def run_render(self, video_id: str):
             )
             .first()
         )
+
+        if render_done:
+            logger.info("Smart Resume: %d clips already exist for video %s, skipping render", existing_clips, video_id)
+            return
+
         if job:
             job.status = JobStatusEnum.RUNNING
             job.progress = 0.0

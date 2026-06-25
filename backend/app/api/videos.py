@@ -215,9 +215,8 @@ async def reprocess_video(
     has_transcription = bool(video.transcript and video.segments and len(video.segments) > 0)
     has_highlights = False
     if has_transcription:
-        first_seg = video.segments[0]
-        if isinstance(first_seg, dict) and "hook_score" in first_seg and "scene_change_intensity" in first_seg:
-            has_highlights = True
+        scored = [s for s in video.segments if isinstance(s, dict) and "hook_score" in s and "scene_change_intensity" in s]
+        has_highlights = len(scored) >= max(1, len(video.segments) // 2)
 
     await db.execute(delete(Clip).where(Clip.video_id == video_id))
     await db.execute(delete(Job).where(Job.video_id == video_id))

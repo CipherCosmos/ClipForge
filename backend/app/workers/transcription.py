@@ -76,8 +76,9 @@ def run_transcription(self, video_id: str):
             .first()
         )
 
-        # ── Smart Resume: check status BEFORE updating ──
-        transcription_skipped = trans_job and trans_job.status == JobStatusEnum.DONE
+        # ── Smart Resume: check both job status AND actual data ──
+        has_transcript_data = bool(video.transcript and video.segments and len(video.segments) > 0)
+        transcription_skipped = (trans_job and trans_job.status == JobStatusEnum.DONE) or has_transcript_data
 
         video.status = VideoStatusEnum.PROCESSING
 

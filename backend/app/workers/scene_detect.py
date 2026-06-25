@@ -99,6 +99,14 @@ def run_scene_detect(self, video_id: str):
         if not video:
             raise ValueError(f"Video {video_id} not found")
 
+        segments = video.segments
+
+        # ── Smart Resume: skip if segments already have scene/audio data ──
+        has_scene_data = bool(segments) and all(
+            isinstance(s, dict) and s.get("scene_change_intensity") is not None
+            for s in segments
+        )
+
         job = (
             session.query(Job)
             .filter(
@@ -109,11 +117,19 @@ def run_scene_detect(self, video_id: str):
             )
             .first()
         )
+
+        if has_scene_data:
+            logger.info("Smart Resume: all segments already have scene data, skipping scene detect")
+            if job and job.status == JobStatusEnum.QUEUED:
+                job.status = JobStatusEnum.DONE
+                job.progress = 1.0
+                session.commit()
+            return segments
+
         if job:
             job.status = JobStatusEnum.RUNNING
             session.commit()
 
-        segments = video.segments
         if not segments:
             logger.warning("No segments for video %s", video_id)
             if job:
