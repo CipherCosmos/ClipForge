@@ -14,7 +14,7 @@ interface Clip {
   file_url: string
   thumbnail_url: string | null
   title: string | null
-  hashtags: string[] | null
+  hashtags: string | null
   created_at: string
 }
 

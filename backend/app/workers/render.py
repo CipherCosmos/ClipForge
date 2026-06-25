@@ -69,22 +69,23 @@ def _use_videotoolbox() -> bool:
     return _VIDEOTOOLBOX_AVAILABLE
 
 METADATA_PROMPT_TEMPLATE = (
-    'Generate viral short metadata for this clip transcript. '
+    'Act as an expert social media manager. Generate highly engaging, viral metadata for this clip transcript.\n'
     'Return ONLY valid JSON:\n'
     '{{\n'
-    '  "title": "<30-char max hook title>",\n'
-    '  "caption": "<caption with emojis and call-to-action>",\n'
-    '  "hashtags": "<comma-separated hashtags>"\n'
+    '  "title": "<clickbait but accurate 30-char title>",\n'
+    '  "caption": "<A detailed 2-3 sentence engaging description with emojis, asking a question to drive comments, and a strong call-to-action>",\n'
+    '  "hashtags": "#viral #trending #<topic1> #<topic2> #<topic3>"\n'
     '}}\n\n'
     'Transcript: "{text}"'
 )
 
 BATCH_METADATA_PROMPT_TEMPLATE = (
-    'Generate viral short metadata for each clip transcript below. '
-    'Return ONLY a valid JSON array with one object per clip, in order:\n'
-    '[{{"hook": "<punchy hook text, max 60 chars>", "title": "<30-char max hook title>", '
-    '"caption": "<caption with emojis and call-to-action>", '
-    '"hashtags": "<comma-separated hashtags>"}}]\n\n'
+    'Act as an expert social media manager. Generate highly engaging, viral metadata for each of the clip transcripts below.\n'
+    'Return ONLY a valid JSON array with one object per clip, maintaining the exact same order.\n\n'
+    'Format each object strictly like this:\n'
+    '[{{"hook": "<punchy on-screen hook, max 60 chars>", "title": "<clickbait but accurate 30-char title>", '
+    '"caption": "<A detailed 2-3 sentence engaging description with emojis, asking a question to drive comments, and a strong call-to-action>", '
+    '"hashtags": "#viral #trending #<topic1> #<topic2> #<topic3>"}}]\n\n'
     'Clips:\n{clips}'
 )
 
@@ -544,14 +545,17 @@ def _generate_clip_metadata(text: str) -> dict:
             resp.raise_for_status()
             data = resp.json()
             meta = json.loads(data.get("response", "{}"))
+            title_val = str(meta.get("title") or "")
+            caption_val = str(meta.get("caption") or "")
+            hashtags_val = str(meta.get("hashtags") or "")
             return {
-                "title": str(meta.get("title", ""))[:100],
-                "caption": str(meta.get("caption", ""))[:500],
-                "hashtags": str(meta.get("hashtags", "")),
+                "title": title_val[:100] if title_val else "Generated Clip",
+                "caption": caption_val[:500] if caption_val else text[:500],
+                "hashtags": hashtags_val if hashtags_val else "#viral",
             }
     except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
         logger.warning("Metadata generation failed: %s", exc)
-        return {"title": "", "caption": text[:500], "hashtags": ""}
+        return {"title": "Generated Clip", "caption": text[:500], "hashtags": "#viral"}
 
 
 def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
@@ -597,10 +601,14 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
             hook = seg.get("text", "").strip()[:60]
         else:
             hook = hook[:80]
+        title_val = str(r.get("title") or "")
+        caption_val = str(r.get("caption") or "")
+        hashtags_val = str(r.get("hashtags") or "")
+        
         metadata = {
-            "title": str(r.get("title", ""))[:100],
-            "caption": str(r.get("caption", seg.get("text", "")[:500]))[:500],
-            "hashtags": str(r.get("hashtags", "")),
+            "title": title_val[:100] if title_val else "Generated Clip",
+            "caption": caption_val[:500] if caption_val else seg.get("text", "")[:500],
+            "hashtags": hashtags_val if hashtags_val else "#viral",
         }
         output.append((hook, metadata))
 

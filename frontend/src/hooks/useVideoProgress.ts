@@ -27,8 +27,24 @@ const STAGE_WEIGHTS: Record<string, { start: number; end: number }> = {
 
 function computeOverall(progressMap: Record<string, number>): number {
   let total = 0
-  for (const [job, info] of Object.entries(STAGE_WEIGHTS)) {
-    const p = progressMap[job] || 0
+  const stageKeys = Object.keys(STAGE_WEIGHTS)
+  let maxActiveIndex = -1
+  
+  for (let i = 0; i < stageKeys.length; i++) {
+    if (progressMap[stageKeys[i]] !== undefined) {
+      maxActiveIndex = Math.max(maxActiveIndex, i)
+    }
+  }
+
+  for (let i = 0; i < stageKeys.length; i++) {
+    const job = stageKeys[i]
+    const info = STAGE_WEIGHTS[job]
+    
+    let p = progressMap[job]
+    if (p === undefined) {
+      p = i < maxActiveIndex ? 1.0 : 0.0
+    }
+    
     total += (info.end - info.start) * p
   }
   return total
@@ -104,7 +120,7 @@ export function useVideoProgress(videoId: string | null) {
     // Try WebSocket
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
     const host = "localhost:8000"
-    const wsUrl = `${protocol}//${host}/api/ws/progress/${videoId}?token=${token}`
+    const wsUrl = `${protocol}//${host}/ws/progress/${videoId}?token=${token}`
 
     let wsConnected = false
     try {
