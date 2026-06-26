@@ -7,7 +7,7 @@ import { logout } from "@/store/authSlice"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, PlusCircle, LogOut, Sparkles, Menu, X, Search,
-  Key, Settings, Sun, Moon, Calendar, CreditCard
+  Key, Settings, Sun, Moon, Calendar, CreditCard, Send
 } from "lucide-react"
 import { useState, useEffect } from "react"
 import { authAPI } from "@/lib/api"
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/app/new", label: "New Project", icon: PlusCircle },
   { href: "/app/research", label: "Research & Trends", icon: Search },
   { href: "/app/schedule", label: "Schedule", icon: Calendar },
+  { href: "/app/publish", label: "Publish", icon: Send },
   { href: "/app/billing", label: "Billing", icon: CreditCard },
   { href: "/app/keys", label: "API Keys", icon: Key },
   { href: "/app/settings", label: "Settings", icon: Settings },

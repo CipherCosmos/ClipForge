@@ -8,8 +8,10 @@ import { AuthGate } from "@/components/AuthGate"
 import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
+import { usePathname } from "next/navigation"
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
   const { token, loading } = useSelector((s: RootState) => s.auth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -20,8 +22,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   // Scroll to top on navigation
   useEffect(() => {
-    if (mainRef.current) mainRef.current.scrollTop = 0
-  }, [children])
+    mainRef.current?.scrollTo(0, 0)
+  }, [pathname])
 
   if (!mounted) {
     return (

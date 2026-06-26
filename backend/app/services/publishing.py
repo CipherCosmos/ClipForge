@@ -8,7 +8,48 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
+
+_REFRESH_TOKEN_PREFIXES = ("1//",)
+
+
+async def _resolve_token(token: str, platform: str, client_id: str | None = None, client_secret: str | None = None) -> str:
+    """Exchange a refresh token for an access token if needed.
+    YouTube refresh tokens start with '1//'. Auto-exchanges for short-lived tokens.
+    Returns a fresh access token on success, or raises ValueError on failure.
+    """
+    if platform == "youtube_shorts" and any(token.startswith(p) for p in _REFRESH_TOKEN_PREFIXES):
+        cid = client_id or getattr(settings, "YOUTUBE_CLIENT_ID", None)
+        csec = client_secret or getattr(settings, "YOUTUBE_CLIENT_SECRET", None)
+        if not cid or not csec:
+            raise ValueError("YouTube refresh token requires Client ID and Client Secret. Add them in Settings → Connected Accounts.")
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "client_id": cid,
+                        "client_secret": csec,
+                        "refresh_token": token,
+                        "grant_type": "refresh_token",
+                    },
+                )
+                if resp.status_code != 200:
+                    err_body = await resp.aread()
+                    raise ValueError(f"Google OAuth token exchange failed ({resp.status_code}): {err_body.decode(errors='replace')[:200]}")
+                data = resp.json()
+                new_token = data.get("access_token", "")
+                if not new_token:
+                    raise ValueError("Google OAuth returned no access_token")
+                logger.info("Exchanged YouTube refresh token for access token successfully")
+                return new_token
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to exchange YouTube refresh token: {e}")
+    return token
 
 # Platform configurations
 PLATFORMS = {
@@ -46,6 +87,9 @@ async def publish_clip(
     hashtags: str,
     access_token: str,
     platform_user_id: str | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    privacy: str = "public",
 ) -> dict[str, Any]:
     """Publish a clip to a social media platform."""
 
@@ -53,6 +97,9 @@ async def publish_clip(
         return {"success": False, "error": f"Unsupported platform: {platform}"}
 
     cfg = PLATFORMS[platform]
+
+    # Resolve token — exchange refresh token for access token if needed
+    resolved_token = await _resolve_token(access_token, platform, client_id, client_secret)
 
     # Download clip to temp file
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
@@ -71,47 +118,70 @@ async def publish_clip(
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             if platform == "youtube_shorts":
-                return await _publish_youtube(client, cfg, tmp.name, title, description, tags, access_token)
+                return await _publish_youtube(client, cfg, tmp.name, title, description, tags, resolved_token, privacy)
             elif platform == "tiktok":
-                return await _publish_tiktok(client, cfg, tmp.name, title, description, tags, access_token)
+                return await _publish_tiktok(client, cfg, tmp.name, title, description, tags, resolved_token)
             elif platform == "instagram_reels":
-                return await _publish_instagram(client, cfg, tmp.name, title, description, tags, access_token, platform_user_id)
+                return await _publish_instagram(client, cfg, tmp.name, title, description, tags, resolved_token, platform_user_id)
             elif platform == "linkedin":
-                return await _publish_linkedin(client, cfg, tmp.name, title, description, tags, access_token)
+                return await _publish_linkedin(client, cfg, tmp.name, title, description, tags, resolved_token)
     finally:
         os.unlink(tmp.name)
 
     return {"success": False, "error": "Unknown platform"}
 
 
-async def _publish_youtube(client, cfg, file_path, title, description, tags, token):
-    """Upload to YouTube."""
+async def _publish_youtube(client, cfg, file_path, title, description, tags, token, privacy="public"):
+    """Upload to YouTube as a Short."""
     try:
         with open(file_path, "rb") as f:
-            files = {"file": ("video.mp4", f, "video/mp4")}
-            data = {
-                "snippet": json.dumps({
-                    "title": title[:100],
-                    "description": f"{description}\n\n{tags}",
-                    "tags": tags.split(),
-                    "categoryId": "22",  # Entertainment
-                }),
-                "status": json.dumps({
-                    "privacyStatus": "public",
+            # Append #Shorts for proper Shorts classification
+            short_title = (title[:80] + " #Shorts") if not title.lower().endswith("#shorts") else title[:100]
+            full_description = description or ""
+            if tags:
+                tag_list = [t.strip() for t in tags.split() if t.strip()]
+                if tag_list:
+                    full_description += f"\n\n{', '.join('#' + t for t in tag_list)}"
+            # YouTube API expects single metadata JSON + video file (2 parts total)
+            metadata = json.dumps({
+                "snippet": {
+                    "title": short_title,
+                    "description": full_description[:5000],
+                    "tags": tags.split() if tags else ["Shorts"],
+                    "categoryId": "22",
+                },
+                "status": {
+                    "privacyStatus": privacy,
                     "selfDeclaredMadeForKids": False,
-                }),
+                },
+            })
+            files = {
+                "metadata": ("metadata.json", metadata.encode(), "application/json; charset=UTF-8"),
+                "file": ("video.mp4", f, "video/mp4"),
             }
             headers = {"Authorization": f"Bearer {token}"}
-            resp = await client.post(cfg["upload_url"], data=data, files=files, headers=headers)
-            result = resp.json()
+            resp = await client.post(cfg["upload_url"], files=files, headers=headers)
             if resp.status_code in (200, 201):
-                video_id = result.get("id", "")
-                return {
-                    "success": True,
-                    "platform_url": f"https://youtu.be/{video_id}",
-                    "platform_id": video_id,
-                }
-            return {"success": False, "error": result.get("error", {}).get("message", str(resp.text))}
+                try:
+                    result = resp.json()
+                    video_id = result.get("id", "")
+                    return {
+                        "success": True,
+                        "platform_url": f"https://youtu.be/{video_id}",
+                        "platform_id": video_id,
+                    }
+                except Exception:
+                    return {"success": False, "error": f"YouTube returned {resp.status_code} with non-JSON response"}
+            elif resp.status_code in (401, 403):
+                return {"success": False, "error": "YouTube rejected the access token. It may be expired or invalid. Reconnect your account in Settings."}
+            else:
+                body = await resp.aread()
+                body_text = body.decode(errors="replace")[:500]
+                try:
+                    result = json.loads(body_text)
+                    return {"success": False, "error": result.get("error", {}).get("message", f"YouTube API error ({resp.status_code}): {body_text}")}
+                except Exception:
+                    return {"success": False, "error": f"YouTube API returned {resp.status_code}: {body_text}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 

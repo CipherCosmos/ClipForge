@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { ArrowLeft, Palette, Music, Globe, Save } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { CaptionStyleSelector } from "@/components/CaptionStyleSelector"
+import { ConnectedAccounts } from "@/components/ConnectedAccounts"
 import { authAPI } from "@/lib/api"
 
 export default function SettingsPage() {
@@ -142,6 +143,9 @@ export default function SettingsPage() {
           {saved ? "Saved!" : "Save Settings"}
         </button>
       </div>
+
+      {/* Connected Accounts */}
+      <ConnectedAccounts />
     </div>
   )
 }

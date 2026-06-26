@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     FROM_EMAIL: str = "noreply@clipforge.app"
     FRONTEND_URL: str = "http://localhost:3000"
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    YOUTUBE_CLIENT_ID: str = ""
+    YOUTUBE_CLIENT_SECRET: str = ""
 
     STRIPE_SECRET_KEY: Optional[str] = None
     STRIPE_PUBLISHABLE_KEY: Optional[str] = None

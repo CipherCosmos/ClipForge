@@ -296,7 +296,7 @@ export default function DashboardPage() {
 
       {/* Batch operations floating bar */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-700 bg-slate-900/95 backdrop-blur-xl px-4 py-3 shadow-2xl shadow-black/50 lg:left-60 lg:ml-0">
+        <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-700 bg-slate-900/95 backdrop-blur-xl px-4 py-3 shadow-2xl shadow-black/50 lg:left-60">
           <div className="mx-auto flex max-w-6xl items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-sm font-medium text-white">

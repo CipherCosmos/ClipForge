@@ -5,6 +5,8 @@ from sqlalchemy import engine_from_config, pool
 import app.models.api_key  # noqa: F401
 import app.models.clip  # noqa: F401
 import app.models.job  # noqa: F401
+import app.models.platform_account  # noqa: F401
+import app.models.publish_log  # noqa: F401
 import app.models.refresh_token  # noqa: F401
 import app.models.schedule  # noqa: F401
 import app.models.subscription  # noqa: F401

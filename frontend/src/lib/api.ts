@@ -180,6 +180,33 @@ export const brandingAPI = {
   searchMusic: (query: string) => api.get("/branding/music/search", { params: { query } }),
 }
 
+export const accountsAPI = {
+  list: () => api.get("/accounts"),
+  create: (data: { platform: string; label: string; access_token: string; platform_user_id?: string }) =>
+    api.post("/accounts", data),
+  update: (id: string, data: { label?: string; access_token?: string; platform_user_id?: string; is_active?: boolean }) =>
+    api.put(`/accounts/${id}`, data),
+  delete: (id: string) => api.delete(`/accounts/${id}`),
+  test: (id: string) => api.post(`/accounts/${id}/test`),
+}
+
+export const publishAPI = {
+  publish: (data: {
+    clip_id: string
+    platform: string
+    title?: string
+    description?: string
+    hashtags?: string
+    platform_account_id?: string
+    access_token?: string
+    platform_user_id?: string
+    dub_language?: string
+    privacy?: string
+  }) => api.post("/publish/clip", data),
+  history: (params?: { clip_id?: string; platform?: string; status?: string; skip?: number; limit?: number }) =>
+    api.get("/publish/history", { params }),
+}
+
 export const billingAPI = {
   plans: () => api.get("/billing/plans"),
   createCheckoutSession: (priceId: string, successUrl: string, cancelUrl: string) =>

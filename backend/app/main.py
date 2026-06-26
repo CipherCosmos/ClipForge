@@ -16,6 +16,7 @@ from app.api.clips import router as clips_router
 from app.api.exports import router as exports_router
 from app.api.jobs import router as jobs_router
 from app.api.keys import router as keys_router
+from app.api.accounts import router as accounts_router
 from app.api.publish import router as publish_router
 from app.api.schedule import router as schedule_router
 from app.api.research import router as research_router
@@ -116,6 +117,7 @@ app.include_router(ws_router)
 app.include_router(research_router)
 app.include_router(branding_router)
 app.include_router(settings_router)
+app.include_router(accounts_router)
 app.include_router(publish_router)
 app.include_router(schedule_router)
 
