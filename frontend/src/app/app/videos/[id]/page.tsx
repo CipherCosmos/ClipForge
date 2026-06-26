@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useDispatch, useSelector, shallowEqual } from "react-redux"
 import { AppDispatch, RootState } from "@/store/store"
-import { fetchVideo, updateVideo } from "@/store/videoSlice"
+import { fetchVideo } from "@/store/videoSlice"
 import { fetchClips as fetchClipsThunk, Clip } from "@/store/clipSlice"
 import {
   ArrowLeft, Sparkles, Globe, Monitor, TrendingUp, RefreshCw,

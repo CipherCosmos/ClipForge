@@ -34,6 +34,7 @@ export const videosAPI = {
   importBatch: (urls: string[], platform?: string) =>
     api.post("/videos/import-batch", { urls, platform }),
   delete: (id: string) => api.delete(`/videos/${id}`),
+  batchDelete: (ids: string[]) => api.post("/videos/batch-delete", { ids }),
   platforms: () => api.get("/videos/platforms"),
   reprocess: (id: string) => api.post(`/videos/${id}/reprocess`),
 }
@@ -44,6 +45,8 @@ export const clipsAPI = {
   dub: (clipId: string, target_lang: string) => api.post(`/clips/${clipId}/dub`, { target_lang }),
   publish: (clipId: string, platform: string, accessToken: string, title?: string, description?: string, hashtags?: string) =>
     api.post(`/publish/clip`, { clip_id: clipId, platform, access_token: accessToken, title, description, hashtags }),
+  update: (id: string, data: Partial<{ title: string; caption: string; hashtags: string }>) =>
+    api.patch(`/clips/${id}`, data),
 }
 
 export const jobsAPI = {
