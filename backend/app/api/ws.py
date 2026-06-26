@@ -74,8 +74,8 @@ def broadcast_sync(video_id: str, job_type: str, progress: float, status: str, m
             loop.run_until_complete(
                 manager.broadcast_progress(video_id, job_type, progress, status, message)
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Broadcast failed: %s", e)
 
 
 @router.websocket("/ws/progress/{video_id}")

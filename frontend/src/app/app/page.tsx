@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from "react-redux"
 import { AppDispatch, RootState } from "@/store/store"
 import { fetchVideos, removeVideo, Video } from "@/store/videoSlice"
 import { PlusCircle, Film, TrendingUp, Clock, ArrowUpRight } from "lucide-react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { VideoCard } from "@/components/VideoCard"
 import { VideoListSkeleton } from "@/components/LoadingSkeleton"
 import { formatScore, formatDuration } from "@/lib/utils"
@@ -14,14 +14,24 @@ export default function DashboardPage() {
   const dispatch = useDispatch<AppDispatch>()
   const { videos, loading } = useSelector((s: RootState) => s.videos)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [initialLoad, setInitialLoad] = useState(true)
-  const [search, setSearch] = useState("")
-  const [platformFilter, setPlatformFilter] = useState("all")
-  const [sortBy, setSortBy] = useState("newest")
+  const [search, setSearch] = useState(searchParams?.get("search") || "")
+  const [platformFilter, setPlatformFilter] = useState(searchParams?.get("platform") || "all")
+  const [sortBy, setSortBy] = useState(searchParams?.get("sort") || "newest")
 
   useEffect(() => {
     dispatch(fetchVideos()).finally(() => setInitialLoad(false))
   }, [dispatch])
+
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (search) params.set("search", search)
+    if (platformFilter !== "all") params.set("platform", platformFilter)
+    if (sortBy !== "newest") params.set("sort", sortBy)
+    const qs = params.toString()
+    router.replace(`/app${qs ? `?${qs}` : ""}`, { scroll: false })
+  }, [search, platformFilter, sortBy, router])
 
   const handleDelete = useCallback((id: string) => {
     dispatch(removeVideo(id))

@@ -27,7 +27,8 @@ class TestComputeTrendBoost:
 class TestFetchTrendingKeywords:
     @patch("app.services.trends.httpx.Client")
     def test_returns_list_on_api_failure(self, mock_client):
-        mock_client.return_value.__enter__.return_value.get.side_effect = Exception(
+        import httpx
+        mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPError(
             "API unavailable"
         )
         trends_cache.clear()

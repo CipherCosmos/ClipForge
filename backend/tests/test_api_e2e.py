@@ -79,7 +79,9 @@ class TestHealth:
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get("/health")
         assert r.status_code == 200
-        assert r.json() == {"status": "ok"}
+        data = r.json()
+        assert data["status"] in ("ok", "degraded")
+        assert "checks" in data
 
 
 class TestAuthE2E:

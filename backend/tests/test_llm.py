@@ -14,10 +14,10 @@ class TestLLMService:
         yield
         settings.GROQ_API_KEY = old_key
 
-    @patch("app.services.llm.httpx.Client")
-    def test_generate_llm_ollama_fallback(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_generate_llm_ollama_fallback(self, mock_get_http):
         mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
         # Mock Ollama response format
         mock_response = MagicMock()
@@ -33,12 +33,12 @@ class TestLLMService:
         call_url = mock_client.post.call_args[0][0]
         assert "api/generate" in call_url
 
-    @patch("app.services.llm.httpx.Client")
-    def test_generate_llm_groq_routing(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_generate_llm_groq_routing(self, mock_get_http):
         settings.GROQ_API_KEY = "test-groq-key"
 
         mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
         # Mock Groq chat completions response format
         groq_json = {

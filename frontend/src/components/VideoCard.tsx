@@ -37,6 +37,8 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
       await videosAPI.delete(video.id)
       onDelete?.(video.id)
     } catch {
+      // error handled silently
+    } finally {
       setDeleting(false)
     }
   }
@@ -55,7 +57,7 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
         {thumbnailUrl && !imgError ? (
           <img
             src={thumbnailUrl}
-            alt=""
+            alt={"Thumbnail for " + (video.title || "video")}
             className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             onError={() => setImgError(true)}
             loading="lazy"
@@ -66,6 +68,11 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-60" />
+        {deleting && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand-400 border-t-transparent" />
+          </div>
+        )}
         <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
           <span className={statusColor(video.status)}>
             {statusLabel(video.status)}

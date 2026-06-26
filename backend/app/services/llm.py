@@ -7,6 +7,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_http_client: httpx.Client | None = None
+def _get_http():
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=30.0)
+    return _http_client
+
 
 def generate_llm(
     prompt: str,
@@ -36,12 +43,12 @@ def generate_llm(
             if format_json:
                 payload["response_format"] = {"type": "json_object"}
 
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                return {"response": content}
+            client = _get_http()
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            return {"response": content}
         except Exception as e:
             logger.error("Failed to generate via Groq API: %s. Falling back to local Ollama.", e)
 
@@ -59,11 +66,11 @@ def generate_llm(
         payload["system"] = system_prompt
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return {"response": data.get("response", "")}
+        client = _get_http()
+        resp = client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return {"response": data.get("response", "")}
     except Exception as e:
         logger.error("Local Ollama generation failed: %s", e)
         raise e

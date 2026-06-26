@@ -1,21 +1,33 @@
+import os
+import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.database import get_db
+from app.core.ratelimit import limiter
 from app.models.job import Job, JobStatusEnum, JobTypeEnum
 from app.models.user import User
 from app.models.video import Video, VideoStatusEnum
 from app.schemas.video import VideoCreate, VideoListResponse, VideoResponse
 from app.services.platforms import get_preset, list_presets
-from app.services.storage import delete_file, ensure_bucket, get_presigned_url, upload_file
+from app.services.storage import delete_file, delete_prefix, ensure_bucket, get_presigned_url, upload_file
 from app.services.video import download_from_url, get_video_duration
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
+
+
+def _validate_url(url: str):
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+    if not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL")
 
 
 def _video_to_response(video: Video) -> VideoResponse:
@@ -34,7 +46,9 @@ def _video_to_response(video: Video) -> VideoResponse:
 
 
 @router.post("", response_model=VideoResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def upload_video(
+    request: Request,
     file: UploadFile = File(...),
     platform: str = Query("youtube_shorts", description="Platform preset"),
     current_user: User = Depends(get_current_user),
@@ -44,12 +58,18 @@ async def upload_video(
 
     ensure_bucket()
 
-    content = await file.read()
+    # Stream to temp file instead of reading all into memory
     ext = Path(file.filename or "video.mp4").suffix or ".mp4"
-    object_name = f"videos/{current_user.id}/{uuid.uuid4()}{ext}"
+    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    try:
+        content = await file.read()
+        tmp.write(content)
+        tmp.close()
 
-    from app.services.storage import upload_bytes
-    upload_bytes(content, object_name, content_type=file.content_type or "video/mp4")
+        object_name = f"videos/{current_user.id}/{uuid.uuid4()}{ext}"
+        upload_file(tmp.name, object_name)
+    finally:
+        os.unlink(tmp.name)
 
     source_url = object_name
 
@@ -78,11 +98,15 @@ async def upload_video(
 
 
 @router.post("/import", response_model=VideoResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def import_video(
+    request: Request,
     payload: VideoCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    _validate_url(payload.source_url)
+
     ensure_bucket()
 
     preset = get_preset(payload.platform or "youtube_shorts")
@@ -231,9 +255,41 @@ async def delete_video(
     await db.execute(delete(Video).where(Video.id == video_id))
     await db.commit()
 
-    from app.services.storage import delete_prefix
     delete_file(video.source_url)
     delete_prefix(f"clips/{video_id}/")
+
+
+@router.post("/batch-delete", status_code=status.HTTP_204_NO_CONTENT)
+async def batch_delete_videos(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    ids = payload.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="No video IDs provided")
+
+    from app.models.clip import Clip
+    from app.models.job import Job
+
+    for vid in ids:
+        video_uuid = uuid.UUID(vid)
+        # Verify ownership
+        result = await db.execute(
+            select(Video).where(Video.id == video_uuid, Video.user_id == current_user.id)
+        )
+        video = result.scalar_one_or_none()
+        if not video:
+            continue
+
+        await db.execute(delete(Clip).where(Clip.video_id == video_uuid))
+        await db.execute(delete(Job).where(Job.video_id == video_uuid))
+        await db.execute(delete(Video).where(Video.id == video_uuid))
+
+        delete_file(video.source_url)
+        delete_prefix(f"clips/{video_uuid}/")
+
+    await db.commit()
 
 
 from pydantic import BaseModel

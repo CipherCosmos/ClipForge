@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     UPSTASH_REDIS_REST_URL: Optional[str] = None
     UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
 
+    CORS_ORIGINS: str = "*"
+    DB_POOL_SIZE: int = 10
+    DB_POOL_OVERFLOW: int = 20
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

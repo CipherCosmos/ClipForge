@@ -5,22 +5,10 @@ from sqlalchemy import and_
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video
+from app.services.scoring import calculate_viral_score
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
-
-
-def _calculate_viral_score(seg: dict) -> float:
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
@@ -65,7 +53,7 @@ def run_join_and_render(self, results, video_id: str):
             })
 
             # Recalculate final viral score
-            merged["viral_score"] = _calculate_viral_score(merged)
+            merged["viral_score"] = calculate_viral_score(merged)
             merged["viral_score"] *= merged.get("trend_boost", 1.0)
 
             merged_segments.append(merged)

@@ -1,9 +1,9 @@
 from io import BytesIO
 from typing import Optional, List
 import logging
-import time
 from datetime import timedelta
 import httpx
+from cachetools import TTLCache
 from minio import Minio
 from minio.error import S3Error
 
@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 
 _client: Optional[Minio] = None
 _supabase_http: Optional[httpx.Client] = None
-_presigned_cache: dict[str, tuple[str, float]] = {}
-_PRESIGNED_CACHE_TTL = 1800
+_presigned_cache: TTLCache = TTLCache(maxsize=1000, ttl=1800)
 
 
 def get_client() -> Minio:
@@ -64,8 +63,8 @@ def ensure_bucket() -> None:
                     "bucket",
                     json={"id": bucket, "name": bucket, "public": True},
                 )
-        except Exception as e:
-            logger.error("Failed to ensure Supabase bucket exists: %s", e)
+        except (httpx.HTTPError, ConnectionError, OSError) as e:
+            logger.warning("Failed to ensure Supabase bucket exists: %s", e)
     else:
         client = get_client()
         bucket = settings.MINIO_BUCKET
@@ -133,10 +132,9 @@ def upload_bytes(
 
 
 def get_presigned_url(object_name: str, expires: int = 3600) -> str:
-    now = time.time()
     cached = _presigned_cache.get(object_name)
-    if cached and (now - cached[1]) < _PRESIGNED_CACHE_TTL:
-        return cached[0]
+    if cached:
+        return cached
 
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
@@ -151,9 +149,10 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
                 from urllib.parse import urlparse
                 parsed = urlparse(settings.SUPABASE_STORAGE_URL)
                 url = f"{parsed.scheme}://{parsed.netloc}{data['signedURL']}"
-                _presigned_cache[object_name] = (url, now)
+                _presigned_cache[object_name] = url
                 return url
             if attempt < 2 and resp.status_code in (404, 429):
+                import time
                 time.sleep(0.5 * (attempt + 1))
                 continue
             break
@@ -165,7 +164,7 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
             settings.MINIO_BUCKET, object_name, expires=timedelta(seconds=expires)
         )
 
-    _presigned_cache[object_name] = (url, now)
+    _presigned_cache[object_name] = url
     return url
 
 

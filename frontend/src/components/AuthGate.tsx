@@ -112,10 +112,11 @@ export function AuthGate() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 className="input"
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
               />
+              <p className="mt-1 text-xs text-slate-500">At least 8 characters</p>
             </div>
 
             {error && !networkError && (

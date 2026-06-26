@@ -1,3 +1,4 @@
+import os
 import ssl
 
 from celery import Celery
@@ -38,8 +39,8 @@ celery_app.conf.update(
 sync_engine = create_engine(
     settings.DATABASE_URL_SYNC,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+    max_overflow=int(os.getenv("DB_POOL_OVERFLOW", "20")),
     pool_recycle=3600,
     connect_args={"connect_timeout": 10},
 )

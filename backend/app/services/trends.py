@@ -52,7 +52,7 @@ def fetch_trending_keywords() -> list[str]:
                 _cache["timestamp"] = now
                 logger.info("Fetched %d trending keywords", len(keywords))
                 return keywords
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.debug("Trend API unavailable: %s", e)
 
     _cache["keywords"] = FALLBACK_TRENDS

@@ -2,13 +2,12 @@ import json
 import logging
 import uuid
 
-import httpx
 from sqlalchemy import and_
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.ws import broadcast_sync
 from app.config import settings
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
+from app.services.scoring import calculate_viral_score
 from app.services.trends import compute_trend_boost, fetch_trending_keywords
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
@@ -123,19 +122,6 @@ def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[di
     ]
 
 
-def _calculate_viral_score(seg: dict) -> float:
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
-
-
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def run_nlp(self, video_id: str):
     session = SyncSessionLocal()
@@ -214,7 +200,7 @@ def run_nlp(self, video_id: str):
             seg["engagement_potential"] = 0.1
             seg["keyword_density"] = 0.1
             seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
-            seg["viral_score"] = _calculate_viral_score(seg)
+            seg["viral_score"] = calculate_viral_score(seg)
 
         # Process the LLM candidates in batches
         llm_total = len(llm_candidates)
@@ -234,7 +220,7 @@ def run_nlp(self, video_id: str):
                 seg["engagement_potential"] = scores.get("engagement_potential", 0.0)
                 seg["keyword_density"] = scores.get("keyword_density", 0.0)
                 seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
-                seg["viral_score"] = _calculate_viral_score(seg)
+                seg["viral_score"] = calculate_viral_score(seg)
 
             done = min(batch_start + BATCH_SIZE, llm_total)
             job_progress = done / max(llm_total, 1)

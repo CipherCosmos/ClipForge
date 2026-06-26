@@ -13,6 +13,7 @@ from app.api.ws import broadcast_sync
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
 from app.services.audio import extract_full_audio
 from app.services.diarization import assign_speaker_scores, diarize_audio
+from app.services.scoring import calculate_viral_score
 from app.services.emotion import (
     analyze_full_audio_emotions,
     extract_full_audio_features,
@@ -71,20 +72,6 @@ def _assign_scene_intensity(segments: list[dict], boundaries: list[float]) -> li
         seg["scene_change_intensity"] = min(1.0, boundary_count / 3.0)
 
     return segments
-
-
-def _calculate_viral_score(seg: dict) -> float:
-    """Recalculate viral score with all available dimensions."""
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
@@ -229,7 +216,7 @@ def run_scene_detect(self, video_id: str):
                 seg["audio_energy"] = 0.0
 
             # Recalculate viral score
-            seg["viral_score"] = _calculate_viral_score(seg)
+            seg["viral_score"] = calculate_viral_score(seg)
             seg["viral_score"] *= seg.get("trend_boost", 1.0)
 
             if job:

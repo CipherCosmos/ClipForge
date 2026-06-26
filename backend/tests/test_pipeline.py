@@ -220,7 +220,7 @@ class TestSceneDetectStep:
 
     def test_viral_score_with_all_dimensions(self):
         """Test the viral score calculates correctly with all 8 dimensions."""
-        from app.workers.scene_detect import _calculate_viral_score
+        from app.services.scoring import calculate_viral_score
 
         seg = {
             "hook_score": 0.9,
@@ -232,7 +232,7 @@ class TestSceneDetectStep:
             "audio_energy": 0.4,
             "speaker_confidence": 0.9,
         }
-        score = _calculate_viral_score(seg)
+        score = calculate_viral_score(seg)
 
         expected = (
             0.25 * 0.9 + 0.20 * 0.8 + 0.15 * 0.85 + 0.10 * 0.5 +
@@ -275,13 +275,13 @@ class TestRenderStep:
         top = _get_top_segments(segments, n=5)
         assert len(top) == 0
 
-    @patch("app.workers.render.httpx.Client")
-    def test_metadata_generation(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_metadata_generation(self, mock_get_http):
         """Test Ollama-based metadata generation."""
         from app.workers.render import _generate_clip_metadata
 
         mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -298,12 +298,12 @@ class TestRenderStep:
         assert meta["title"] == "Amazing Discovery!"
         assert "#science" in meta["hashtags"]
 
-    @patch("app.workers.render.httpx.Client")
-    def test_metadata_fallback_on_error(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_metadata_fallback_on_error(self, mock_get_http):
         """Test metadata falls back gracefully on Ollama error."""
         from app.workers.render import _generate_clip_metadata
 
-        mock_client = mock_client_class.return_value.__enter__.return_value
+        mock_client = mock_get_http.return_value
         mock_client.post.side_effect = ValueError("API down")
 
         meta = _generate_clip_metadata("Test transcript text")
@@ -422,9 +422,9 @@ class TestViralScoreFormula:
 
     def test_hook_dominance(self):
         """Segments with strong hooks should score highest."""
-        from app.workers.scene_detect import _calculate_viral_score
+        from app.services.scoring import calculate_viral_score
 
-        strong_hook = _calculate_viral_score({
+        strong_hook = calculate_viral_score({
             "hook_score": 1.0, "emotion_intensity": 0.0,
             "engagement_potential": 0.0, "keyword_density": 0.0,
             "scene_change_intensity": 0.0, "audio_event_score": 0.0,
@@ -433,7 +433,7 @@ class TestViralScoreFormula:
         # Hook weight is 0.25
         assert strong_hook == pytest.approx(0.25)
 
-        strong_emotion = _calculate_viral_score({
+        strong_emotion = calculate_viral_score({
             "hook_score": 0.0, "emotion_intensity": 1.0,
             "engagement_potential": 0.0, "keyword_density": 0.0,
             "scene_change_intensity": 0.0, "audio_event_score": 0.0,
@@ -448,7 +448,7 @@ class TestViralScoreFormula:
     def test_trend_boost_magnifies_score(self):
         """Trend boost should multiply the final viral score."""
         from app.services.trends import compute_trend_boost
-        from app.workers.scene_detect import _calculate_viral_score
+        from app.services.scoring import calculate_viral_score
 
         seg = {
             "hook_score": 0.5, "emotion_intensity": 0.5,
@@ -457,7 +457,7 @@ class TestViralScoreFormula:
             "audio_energy": 0.5, "speaker_confidence": 0.5,
         }
 
-        base_score = _calculate_viral_score(seg)
+        base_score = calculate_viral_score(seg)
         boost = compute_trend_boost("AI technology machine learning")
 
         # Trend boost should be >= 1.0

@@ -30,7 +30,21 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: python -m pytest || exit 0
+        run: python -m pytest
+
+      - name: Build Docker images
+        run: docker compose build
+
+      - name: Security audit (Python)
+        run: |
+          cd backend
+          source .venv/bin/activate
+          pip install pip-audit
+          pip-audit || true  # Don't fail CI on audit warnings
+      - name: Security audit (Frontend)
+        run: |
+          cd frontend
+          npm audit || true  # Don't fail CI on audit warnings
 
   frontend:
     runs-on: ubuntu-latest
