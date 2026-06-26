@@ -74,9 +74,9 @@ export default function PublishPage() {
   const publishOne = async (clipId: string, clipTitle: string, clipDesc: string, clipTags: string) => {
     const res = await publishAPI.publish({
       clip_id: clipId, platform,
-      title: clipTitle || title,
-      description: clipDesc || description,
-      hashtags: clipTags || hashtags,
+      title: clipTitle,
+      description: clipDesc,
+      hashtags: clipTags,
       platform_account_id: selectedAccount || undefined,
       privacy,
     })
@@ -94,7 +94,11 @@ export default function PublishPage() {
     
     const promises = ids.map(clipId => {
       const clip = clips.find(c => c.id === clipId)
-      return publishOne(clipId, clip?.caption || title, clip?.caption || description, clip?.hashtags || hashtags)
+      // Use each clip's own data for batch publish — form fields are just defaults
+      const clipTitle = clip?.title || clip?.caption || title
+      const clipDesc = clip?.caption || description
+      const clipTags = clip?.hashtags || hashtags
+      return publishOne(clipId, clipTitle, clipDesc, clipTags)
         .then(r => ({ id: clipId, ...r }))
         .catch(err => ({ id: clipId, success: false, error: err.response?.data?.detail || err.message }))
     })
