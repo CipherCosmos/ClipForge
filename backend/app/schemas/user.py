@@ -13,7 +13,6 @@ class UserResponse(BaseModel):
     id: uuid.UUID
     email: str
     plan: str
-    api_key_hash: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

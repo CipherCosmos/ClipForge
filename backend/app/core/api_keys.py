@@ -1,66 +1,50 @@
-"""API key authentication for external programmatic access."""
+"""API key authentication and management with names and expiration."""
 import hashlib
-import logging
 import secrets
-import uuid
+import logging
+import uuid as uuid_mod
+from datetime import datetime, timezone, timedelta
 from typing import Optional
-
-from fastapi import HTTPException, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from app.database import async_session
+from app.models.api_key import ApiKey
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
-_api_key_cache: dict[str, tuple[str, str]] = {}
 
-
-def generate_api_key() -> tuple[str, str]:
+def generate_api_key(name: str = "Default", expire_days: Optional[int] = None) -> tuple[str, str, str, Optional[datetime]]:
     raw = f"cf_{secrets.token_hex(24)}"
     hashed = hashlib.sha256(raw.encode()).hexdigest()
-    return raw, hashed
+    prefix = raw[:16]
+    expires_at = datetime.now(timezone.utc) + timedelta(days=expire_days) if expire_days else None
+    return raw, hashed, prefix, expires_at
 
 
-async def get_user_from_api_key(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
-) -> Optional[User]:
-    if credentials is None:
-        return None
+async def authenticate_api_key(token: str) -> Optional[User]:
+    """Look up an API key and return the owning user, or None."""
+    prefix = token[:16]
 
-    api_key = credentials.credentials
-
-    prefix = api_key[:16]
-    if prefix in _api_key_cache:
-        user_id, plan = _api_key_cache[prefix]
-
-        class _ApiUser:
-            def __init__(self):
-                self.id = uuid.UUID(user_id)
-                self.plan = plan
-                self.email = f"api_{user_id[:8]}@clipforge.io"
-
-        return _ApiUser()
-
-    hashed = hashlib.sha256(api_key.encode()).hexdigest()
+    hashed = hashlib.sha256(token.encode()).hexdigest()
     async with async_session() as session:
         result = await session.execute(
-            select(User).where(User.api_key_hash == hashed)
+            select(ApiKey)
+            .options(joinedload(ApiKey.user))
+            .where(ApiKey.key_hash == hashed, ApiKey.is_active == True)
         )
-        user = result.scalar_one_or_none()
-        if user:
-            _api_key_cache[prefix] = (str(user.id), user.plan)
-            return user
+        api_key = result.scalar_one_or_none()
+        if api_key is None or api_key.is_expired:
+            return None
+        user = api_key.user
+        if user is None:
+            return None
+        api_key.last_used_at = datetime.now(timezone.utc)
+        await session.commit()
+        return user
 
     return None
-
-
-async def require_api_key(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-) -> User:
-    user = await get_user_from_api_key(credentials)
-    if user is None:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    return user

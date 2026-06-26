@@ -19,8 +19,9 @@ export const authAPI = {
   login: (email: string, password: string) => api.post("/auth/login", { email, password }),
   me: () => api.get("/auth/me"),
   getApiKeyStatus: () => api.get("/keys"),
-  generateApiKey: () => api.post("/keys/generate"),
-  revokeApiKey: () => api.delete("/keys/revoke"),
+  generateApiKey: (name?: string, expireDays?: number | null) =>
+    api.post("/keys/generate", { name: name || "Default", expire_days: expireDays || null }),
+  revokeApiKey: (keyId: string) => api.delete(`/keys/${keyId}`),
 }
 
 export const videosAPI = {

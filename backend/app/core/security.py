@@ -80,10 +80,8 @@ async def get_current_user(
                 return user
 
     # Fallback: try API key authentication
-    import hashlib
-    hashed = hashlib.sha256(token.encode()).hexdigest()
-    result = await db.execute(select(User).where(User.api_key_hash == hashed))
-    user = result.scalar_one_or_none()
+    from app.core.api_keys import authenticate_api_key
+    user = await authenticate_api_key(token)
     if user:
         return user
 

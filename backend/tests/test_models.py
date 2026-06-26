@@ -62,24 +62,31 @@ def test_job_creation():
             assert job.progress == 0.5
 
 
-def test_user_api_key_hash():
+def test_api_key_model():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
+    from app.models.api_key import ApiKey
 
     engine = create_engine("sqlite:///:memory:")
     User.__table__.create(bind=engine)
+    ApiKey.__table__.create(bind=engine)
     test_session = sessionmaker(bind=engine)
     db = test_session()
-    user = User(
-        email="apikey@test.com",
-        password_hash="hash",
-        plan=PlanEnum.FREE,
-        api_key_hash="abc123",
-    )
+
+    user = User(email="apikey2@test.com", password_hash="hash", plan=PlanEnum.FREE)
     db.add(user)
+    db.flush()
+
+    api_key = ApiKey(user_id=user.id, name="Test Key", key_hash="abc123def456", key_prefix="cf_test123")
+    db.add(api_key)
     db.commit()
-    fetched = db.query(User).filter(User.email == "apikey@test.com").first()
-    assert fetched.api_key_hash == "abc123"
+
+    fetched = db.query(ApiKey).filter(ApiKey.name == "Test Key").first()
+    assert fetched is not None
+    assert fetched.key_hash == "abc123def456"
+    assert fetched.key_prefix == "cf_test123"
+    assert fetched.is_active is True
+    assert fetched.is_expired is False
     db.close()
 
 
