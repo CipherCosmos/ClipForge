@@ -7,7 +7,7 @@ import {
   RefreshCw, Check, AlertCircle, Sparkle, Copy, BookOpen, 
   Film, MessageSquare, MapPin, TrendingUp, Music, Users, Layers
 } from "lucide-react"
-import { researchAPI, videosAPI } from "@/lib/api"
+import { researchAPI, videosAPI, authAPI } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 interface Trend {
@@ -71,6 +71,7 @@ export default function ResearchPage() {
   const router = useRouter()
   const [trends, setTrends] = useState<Trend[]>([])
   const [loadingTrends, setLoadingTrends] = useState(false)
+  const [defaultGeo, setDefaultGeo] = useState("US")
   const [selectedGeo, setSelectedGeo] = useState("US")
   const [selectedSource, setSelectedSource] = useState("google")
   
@@ -93,6 +94,18 @@ export default function ResearchPage() {
   const [copiedScript, setCopiedScript] = useState(false)
   const [copiedComment, setCopiedComment] = useState(false)
   const [copiedHookIdx, setCopiedHookIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authAPI.getSettings()
+        if (res.data.research_location) {
+          setDefaultGeo(res.data.research_location)
+          setSelectedGeo(res.data.research_location)
+        }
+      } catch {}
+    })()
+  }, [])
 
   useEffect(() => {
     loadTrends(selectedGeo, selectedSource)

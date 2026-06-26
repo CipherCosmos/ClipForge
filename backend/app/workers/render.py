@@ -15,8 +15,7 @@ from sqlalchemy import and_
 from app.api.ws import broadcast_sync
 from app.config import settings
 from app.models import Clip, Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
-from app.services.branding import BrandConfig, build_watermark_filter
-from app.services.branding import BrandConfig, generate_title_card
+from app.services.branding import BrandConfig, build_watermark_filter, generate_title_card
 from app.services.ducking import build_duck_filter
 from app.services.moderation import moderate_segment
 from app.services.platforms import get_preset
@@ -454,21 +453,14 @@ def _build_hook_overlay_filter(hook_text: str, duration: float) -> str | None:
     )
 
 
-def _build_subtitle_filter(caption: str) -> str | None:
-    """Build FFmpeg drawtext filter for auto-captions."""
+def _build_subtitle_filter(caption: str, style: str = "classic") -> list[str]:
+    """Build FFmpeg drawtext filter for auto-captions with the given visual style."""
     if not _has_drawtext():
-        return None
+        return []
     if not caption or not caption.strip():
-        return None
-    text = caption.strip()[:120]
-    text = text.replace(":", "\\:").replace("'", "\\'")
-    return (
-        f"drawtext=text='{text}':"
-        f"fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10:"
-        f"x=(w-text_w)/2:y=h-th-60:"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    )
+        return []
+    from app.services.branding import build_caption_style_filter
+    return build_caption_style_filter(caption.strip()[:120], style)
 
 
 def _extract_frame(video_path: str, timestamp: float) -> str | None:
@@ -559,6 +551,7 @@ def _render_clip(
     preset: object | None = None,
     hook_text: str = "",
     watermark_filters: list[str] | None = None,
+    caption_style: str = "classic",
 ) -> None:
     if preset is None:
         from app.services.platforms import PlatformPreset
@@ -598,15 +591,15 @@ def _render_clip(
             f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2"
         )
 
-    subtitle_filter = _build_subtitle_filter(caption)
-    if subtitle_filter:
-        filters.append(subtitle_filter)
+    subtitle_filters = _build_subtitle_filter(caption, caption_style)
+    if subtitle_filters:
+        filters.extend(subtitle_filters)
 
     if not hook_text:
         hook_text = _generate_hook_text(caption)
     hook_filter = _build_hook_overlay_filter(hook_text, duration)
     if hook_filter:
-        if subtitle_filter:
+        if subtitle_filters:
             filters.insert(-1, hook_filter)
         else:
             filters.append(hook_filter)
@@ -936,13 +929,13 @@ def _render_compilation(
 
 def _render_clip_parallel(args: tuple) -> dict | None:
     """Render a single clip (runs in thread pool)."""
-    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata, watermark_filters = args
+    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata, watermark_filters, caption_style = args
 
     clip_filename = f"clip_{clip_idx:04d}.mp4"
     clip_dir = os.path.dirname(input_path)
     clip_path = os.path.join(clip_dir, clip_filename)
 
-    _render_clip(input_path, clip_path, start, end, caption, preset, hook_text, watermark_filters)
+    _render_clip(input_path, clip_path, start, end, caption, preset, hook_text, watermark_filters, caption_style)
 
     moderation = moderate_segment(input_path, caption, start + 1.0)
     if not moderation["passed"]:
@@ -1084,12 +1077,29 @@ def run_render(self, video_id: str):
             if needs_watermark:
                 watermark_filters = build_watermark_filter(user_brand, 1080, 1920)
 
+            # Apply background music if configured
+            music_track = prefs.get("music_track", "")
+            if music_track and segments:
+                from app.services.music import generate_backing_track, apply_backing_music
+                music_path = tempfile.mktemp(suffix=".mp3")
+                try:
+                    video_duration = _get_media_duration(input_video_path)
+                    result = generate_backing_track(music_track, video_duration, music_path)
+                    if result:
+                        speech_segments = [{"start": s["start"], "end": s["end"]} for s in segments if s.get("text", "").strip()]
+                        input_video_path = apply_backing_music(input_video_path, music_path, speech_segments, input_video_path)
+                except Exception as e:
+                    logger.warning("Background music failed: %s", e)
+                finally:
+                    if os.path.exists(music_path):
+                        os.unlink(music_path)
+
             total = len(top_segments)
             render_args = [
                 (input_video_path, seg["start"], seg["end"],
                  seg.get("text", ""), video_id, idx, preset,
                  pre_generated_data[idx][0], pre_generated_data[idx][1],
-                 watermark_filters)
+                 watermark_filters, caption_style)
                 for idx, seg in enumerate(top_segments)
             ]
 

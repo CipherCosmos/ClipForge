@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useState, useRef, useEffect } from "react"
-import { Download, Copy, Check, Clock, TrendingUp, Hash, Film, Globe, Loader2 } from "lucide-react"
+import { Download, Copy, Check, Clock, TrendingUp, Hash, Film, Globe } from "lucide-react"
 import { formatDuration, cn } from "@/lib/utils"
 import { clipsAPI } from "@/lib/api"
 
@@ -44,6 +44,7 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
   const [publishing, setPublishing] = useState<string | null>(null)
   const [publishError, setPublishError] = useState("")
   const [publishSuccess, setPublishSuccess] = useState(false)
+  const [publishForm, setPublishForm] = useState<{platform: string; token: string; title: string; description: string} | null>(null)
 
   const [copiedDesc, setCopiedDesc] = useState(false)
   const [copiedTags, setCopiedTags] = useState(false)
@@ -84,17 +85,20 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
     ? localClip.dubs[selectedLang]
     : clip.file_url
 
-  const handlePublish = async (platform: string) => {
-    setPublishing(platform)
+  const openPublishForm = (platform: string) => {
+    setPublishForm({ platform, token: "", title: clip.title || "", description: clip.caption || "" })
+  }
+
+  const submitPublish = async () => {
+    if (!publishForm) return
+    setPublishing(publishForm.platform)
     setPublishError("")
     setPublishSuccess(false)
     try {
-      const token = prompt(`Enter your ${platform} access token:`)
-      if (!token) { setPublishing(null); return }
-
-      const res = await clipsAPI.publish(clip.id, platform, token)
+      const res = await clipsAPI.publish(clip.id, publishForm.platform, publishForm.token, publishForm.title, publishForm.description, clip.hashtags || "")
       if (res.data.success) {
         setPublishSuccess(true)
+        setPublishForm(null)
         setTimeout(() => setPublishSuccess(false), 5000)
       } else {
         setPublishError(res.data.error || "Publish failed")
@@ -315,27 +319,33 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
             </div>
             <div className="flex gap-2">
               {["youtube_shorts", "tiktok", "instagram_reels"].map((platform) => (
-                <button
-                  key={platform}
-                  onClick={() => handlePublish(platform)}
-                  disabled={publishing === platform}
-                  className="flex-1 btn-slate py-1.5 text-xs flex items-center justify-center gap-1.5"
-                >
-                  {publishing === platform ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    platform === "youtube_shorts" ? "YouTube" :
-                    platform === "tiktok" ? "TikTok" : "Instagram"
-                  )}
+                <button key={platform} onClick={() => openPublishForm(platform)} disabled={!!publishForm}
+                  className="flex-1 btn-slate py-1.5 text-xs flex items-center justify-center gap-1.5">
+                  {platform === "youtube_shorts" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Instagram"}
                 </button>
               ))}
             </div>
-            {publishError && (
-              <p className="text-xs text-red-400 mt-1">{publishError}</p>
+            
+            {/* Publish form popup */}
+            {publishForm && (
+              <div className="rounded-lg border border-slate-700 bg-slate-800/80 p-3 space-y-2 mt-2">
+                <p className="text-xs font-semibold text-white">Publish to {publishForm.platform}</p>
+                <input value={publishForm.token} onChange={e => setPublishForm({...publishForm, token: e.target.value})}
+                  placeholder="Access token" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <input value={publishForm.title} onChange={e => setPublishForm({...publishForm, title: e.target.value})}
+                  placeholder="Title" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <div className="flex gap-2">
+                  <button onClick={() => setPublishForm(null)} className="flex-1 btn-slate py-1 text-xs">Cancel</button>
+                  <button onClick={submitPublish} disabled={!publishForm.token || publishing === publishForm.platform}
+                    className="flex-1 btn-primary py-1 text-xs">
+                    {publishing === publishForm.platform ? "Publishing..." : "Publish"}
+                  </button>
+                </div>
+              </div>
             )}
-            {publishSuccess && (
-              <p className="text-xs text-emerald-400 mt-1">Published successfully!</p>
-            )}
+            
+            {publishError && <p className="text-xs text-red-400 mt-1">{publishError}</p>}
+            {publishSuccess && <p className="text-xs text-emerald-400 mt-1">Published successfully!</p>}
           </div>
         )}
 
