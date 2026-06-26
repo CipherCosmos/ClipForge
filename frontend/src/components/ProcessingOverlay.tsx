@@ -91,15 +91,11 @@ export const ProcessingOverlay = memo(function ProcessingOverlay({
           </div>
         )}
 
-        {/* Completed state */}
+        {/* Completed state — brief green indicator that doesn't block video */}
         {status === "completed" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-surface/60 backdrop-blur-sm">
-            <div className="flex flex-col items-center">
-              <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/20">
-                <CheckCircle2 size={28} className="text-emerald-400" />
-              </div>
-              <p className="text-lg font-semibold text-white">All clips ready!</p>
-            </div>
+          <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full bg-emerald-500/20 px-3 py-1.5 backdrop-blur-sm">
+            <CheckCircle2 size={14} className="text-emerald-400" />
+            <span className="text-xs font-medium text-emerald-400">Done</span>
           </div>
         )}
 

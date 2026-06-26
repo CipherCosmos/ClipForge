@@ -29,6 +29,7 @@ class Schedule(Base):
     hashtags = Column(String(500), nullable=True, default="")
     access_token = Column(Text, nullable=False)
     platform_user_id = Column(String(255), nullable=True)
+    dub_language = Column(String(10), nullable=True)  # e.g. "es", "fr" — publish dubbed version
     scheduled_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(String(50), nullable=False, default="pending")
     result = Column(JSON, nullable=True)

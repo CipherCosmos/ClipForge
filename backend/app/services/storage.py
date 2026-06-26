@@ -250,3 +250,54 @@ def download_file(object_name: str, file_path: str) -> None:
     else:
         client = get_client()
         client.fget_object(settings.MINIO_BUCKET, object_name, file_path)
+
+
+def copy_file(src_object_name: str, dest_object_name: str) -> None:
+    """Perform a server-side copy of an object from source to destination."""
+    if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
+        bucket = settings.MINIO_BUCKET
+        resp = _supabase_request(
+            "POST",
+            "object/copy",
+            json={
+                "bucketId": bucket,
+                "sourceKey": src_object_name,
+                "destinationKey": dest_object_name,
+            },
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "Failed to copy file in Supabase: %s -> %s (code: %s, body: %s)",
+                src_object_name,
+                dest_object_name,
+                resp.status_code,
+                resp.text,
+            )
+    else:
+        client = get_client()
+        from minio.common import CopySource
+        bucket = settings.MINIO_BUCKET
+        try:
+            client.copy_object(
+                bucket,
+                dest_object_name,
+                CopySource(bucket, src_object_name),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to copy file in MinIO: %s -> %s (%s)",
+                src_object_name,
+                dest_object_name,
+                e,
+            )
+
+
+def copy_prefix(src_prefix: str, dest_prefix: str) -> None:
+    """Copy all objects matching the source prefix to the destination prefix."""
+    files = list_files(src_prefix)
+    for src_file in files:
+        if src_file.startswith(src_prefix):
+            relative_path = src_file[len(src_prefix):]
+            dest_file = f"{dest_prefix}{relative_path}"
+            copy_file(src_file, dest_file)
+

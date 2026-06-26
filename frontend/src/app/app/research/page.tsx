@@ -67,6 +67,25 @@ const SOURCES = [
   { id: "news", label: "Global News", icon: BookOpen, color: "text-emerald-400 hover:text-emerald-300" },
 ]
 
+const NICHES = [
+  { id: "general", label: "General Trends" },
+  { id: "sports", label: "Sports" },
+  { id: "facts", label: "Amazing Facts" },
+  { id: "cartoon", label: "Cartoons & Anime" },
+  { id: "science", label: "Science & Space" },
+  { id: "tech", label: "Tech & Gadgets" },
+  { id: "code", label: "Programming & Git" },
+  { id: "trading", label: "Stock & Crypto" },
+  { id: "investing", label: "Finance & Investing" },
+]
+
+const MOCK_TRACKS = [
+  { id: "track_1", title: "Cyberpunk Pulse", genre: "Synthwave", duration: "1:02", vibe: "High Energy / Suspense" },
+  { id: "track_2", title: "Lo-Fi Coffee", genre: "Chillhop", duration: "1:30", vibe: "Relaxed / Educational" },
+  { id: "track_3", title: "Epic Cinematic", genre: "Orchestral", duration: "0:58", vibe: "Inspirational / Hype" },
+  { id: "track_4", title: "Trap Beat Drop", genre: "Hip Hop", duration: "1:15", vibe: "Modern / Bold" },
+]
+
 export default function ResearchPage() {
   const router = useRouter()
   const [trends, setTrends] = useState<Trend[]>([])
@@ -74,6 +93,7 @@ export default function ResearchPage() {
   const [defaultGeo, setDefaultGeo] = useState("US")
   const [selectedGeo, setSelectedGeo] = useState("US")
   const [selectedSource, setSelectedSource] = useState("google")
+  const [selectedNiche, setSelectedNiche] = useState("general")
   
   const [selectedTopic, setSelectedTopic] = useState("")
   const [customTopic, setCustomTopic] = useState("")
@@ -95,6 +115,41 @@ export default function ResearchPage() {
   const [copiedComment, setCopiedComment] = useState(false)
   const [copiedHookIdx, setCopiedHookIdx] = useState<number | null>(null)
 
+  // AI Validation Report state
+  const [validatingTopic, setValidatingTopic] = useState(false)
+  const [validationReport, setValidationReport] = useState<any | null>(null)
+  const [importingTrend, setImportingTrend] = useState(false)
+
+  // Edited script states
+  const [editedHook, setEditedHook] = useState("")
+  const [editedBody, setEditedBody] = useState("")
+  const [editedCTA, setEditedCTA] = useState("")
+  const [editedComment, setEditedComment] = useState("")
+
+  // Embedded video preview state
+  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null)
+
+  // Soundtrack Shelf state
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null)
+  const [selectedMusicId, setSelectedMusicId] = useState<string | null>("track_1")
+
+  // Helper to extract YouTube video ID
+  const getYouTubeId = (url: string) => {
+    if (!url) return null
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/
+    const match = url.match(regExp)
+    return (match && match[2].length === 11) ? match[2] : null
+  }
+
+  useEffect(() => {
+    if (analysis) {
+      setEditedHook(analysis.punchy_hook || "")
+      setEditedBody(analysis.script_body || "")
+      setEditedCTA(analysis.call_to_action || "")
+      setEditedComment(analysis.pin_comment || "")
+    }
+  }, [analysis])
+
   useEffect(() => {
     (async () => {
       try {
@@ -107,10 +162,10 @@ export default function ResearchPage() {
     })()
   }, [])
 
-  const loadTrends = async (geoCode: string, sourceFeed: string) => {
+  const loadTrends = async (geoCode: string, sourceFeed: string, nicheCode: string) => {
     setLoadingTrends(true)
     try {
-      const res = await researchAPI.trends(geoCode, sourceFeed)
+      const res = await researchAPI.trends(geoCode, sourceFeed, nicheCode)
       setTrends(res.data.trends || [])
     } catch {
       showToast("Failed to load trending topics", "error")
@@ -120,9 +175,9 @@ export default function ResearchPage() {
   }
 
   useEffect(() => {
-    loadTrends(selectedGeo, selectedSource)
+    loadTrends(selectedGeo, selectedSource, selectedNiche)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedGeo, selectedSource])
+  }, [selectedGeo, selectedSource, selectedNiche])
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToastMessage(msg)
@@ -130,10 +185,24 @@ export default function ResearchPage() {
     setTimeout(() => setToastMessage(null), 4000)
   }
 
+  const validateTopic = async (topic: string, niche: string) => {
+    setValidatingTopic(true)
+    setValidationReport(null)
+    try {
+      const res = await researchAPI.validateTopic(topic, niche)
+      setValidationReport(res.data)
+    } catch {
+      showToast("Failed to run AI validation & fact check", "error")
+    } finally {
+      setValidatingTopic(false)
+    }
+  }
+
   const handleSelectTopic = (topic: string) => {
     setSelectedTopic(topic)
     setCustomTopic(topic)
     analyzeTopic(topic, selectedTone)
+    validateTopic(topic, selectedNiche)
   }
 
   const handleCustomSubmit = (e: React.FormEvent) => {
@@ -141,6 +210,28 @@ export default function ResearchPage() {
     if (!customTopic.trim()) return
     setSelectedTopic(customTopic)
     analyzeTopic(customTopic, selectedTone)
+    validateTopic(customTopic, selectedNiche)
+  }
+
+  const handleImportTrend = async (topic: string) => {
+    setImportingTrend(true)
+    showToast("Analyzing trend & fetching matching video...", "success")
+    try {
+      const res = await researchAPI.importTrend(topic, selectedNiche)
+      const video = res.data
+      if (video.progress === 100) {
+        showToast("Cloned processed video instantly! Redirecting to Dashboard...", "success")
+      } else {
+        showToast("One-Click ingestion pipeline started! Redirecting to Dashboard...", "success")
+      }
+      setTimeout(() => {
+        router.push("/app")
+      }, 1500)
+    } catch (err) {
+      showToast("Failed to run One-Click generation for this trend", "error")
+    } finally {
+      setImportingTrend(false)
+    }
   }
 
   const analyzeTopic = async (topic: string, tone: string) => {
@@ -321,6 +412,25 @@ export default function ResearchPage() {
               })}
             </div>
 
+            {/* Niche Selector */}
+            <div className="flex flex-col gap-1 border-t border-slate-800/60 pt-3">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Niche / Target Industry</span>
+              <select
+                value={selectedNiche}
+                onChange={(e) => {
+                  setSelectedNiche(e.target.value)
+                  setTrends([])
+                }}
+                className="text-xs bg-slate-950 border border-slate-800 text-slate-300 rounded px-2.5 py-1.5 focus:outline-none transition-all font-semibold cursor-pointer w-full"
+              >
+                {NICHES.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex items-center justify-between border-t border-slate-800/60 pt-3">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                 <Flame size={12} className="text-amber-400" />
@@ -345,7 +455,7 @@ export default function ResearchPage() {
                   </div>
                 )}
                 <button 
-                  onClick={() => loadTrends(selectedGeo, selectedSource)} 
+                  onClick={() => loadTrends(selectedGeo, selectedSource, selectedNiche)} 
                   disabled={loadingTrends}
                   className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 disabled:opacity-50"
                 >
@@ -369,19 +479,35 @@ export default function ResearchPage() {
           ) : (
             <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1">
               {trends.map((t, idx) => (
-                <button
+                <div
                   key={idx}
-                  onClick={() => handleSelectTopic(t.topic)}
                   className={cn(
-                    "flex flex-col items-start gap-1 rounded-lg px-3 py-2 text-left text-xs border transition-all duration-200 hover:bg-slate-800/20",
+                    "flex items-center justify-between gap-3 rounded-lg px-3 py-2 border transition-all duration-200 hover:bg-slate-800/10 group/trend",
                     selectedTopic === t.topic
                       ? "bg-brand-500/10 border-brand-500/40 text-brand-400 font-bold"
                       : "bg-slate-950/20 border-slate-800/40 text-slate-300 hover:border-slate-700/60"
                   )}
                 >
-                  <span className="w-full font-bold line-clamp-2 leading-snug">{t.topic}</span>
-                  <span className="text-[9px] text-slate-500 font-semibold">{t.traffic}</span>
-                </button>
+                  <button
+                    onClick={() => handleSelectTopic(t.topic)}
+                    className="flex-1 text-left flex flex-col gap-1 min-w-0"
+                  >
+                    <span className="w-full font-bold line-clamp-2 leading-snug">{t.topic}</span>
+                    <span className="text-[9px] text-slate-500 font-semibold">{t.traffic}</span>
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleImportTrend(t.topic)
+                    }}
+                    disabled={importingTrend}
+                    className="hidden group-hover/trend:flex items-center gap-1 text-[9px] font-extrabold uppercase bg-brand-500 hover:bg-brand-400 text-slate-950 px-2 py-1 rounded transition-all shrink-0 shadow-sm"
+                  >
+                    <Sparkles size={10} className="fill-current" />
+                    Gen
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -486,6 +612,23 @@ export default function ResearchPage() {
                     <h3 className="text-base font-extrabold text-white leading-tight">
                       {selectedTopic}
                     </h3>
+                    <button
+                      onClick={() => handleImportTrend(selectedTopic)}
+                      disabled={importingTrend}
+                      className="mt-3 flex items-center gap-1.5 text-xs font-bold bg-brand-500 hover:bg-brand-400 text-slate-950 px-3.5 py-1.5 rounded-lg transition-all shadow-md shadow-brand-500/25 disabled:opacity-50"
+                    >
+                      {importingTrend ? (
+                        <>
+                          <RefreshCw size={12} className="animate-spin" />
+                          Generating Clips...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={12} className="fill-current" />
+                          One-Click Auto-Generate Clips
+                        </>
+                      )}
+                    </button>
                   </div>
 
                   {/* Viral Score Circular Badge */}
@@ -524,6 +667,149 @@ export default function ResearchPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* AI Credibility & Quality Gate (Fact-Check report) */}
+                {(validatingTopic || validationReport) && (
+                  <div className="bg-slate-950/50 border border-slate-800/80 rounded-xl p-4 mb-5 space-y-3.5">
+                    <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-brand-400" />
+                        AI Credibility & Quality Assessment
+                      </h4>
+                      {validationReport && (
+                        <span className={cn(
+                          "text-[9px] font-bold px-2 py-0.5 rounded border uppercase tracking-wider",
+                          validationReport.is_valid 
+                            ? "bg-emerald-950/40 text-emerald-400 border-emerald-500/20"
+                            : "bg-red-950/40 text-red-400 border-red-500/20"
+                        )}>
+                          {validationReport.is_valid ? "Highly Credible" : "Warning: Double Check"}
+                        </span>
+                      )}
+                    </div>
+
+                    {validatingTopic ? (
+                      <div className="flex items-center gap-2 text-xs text-slate-500 py-1">
+                        <RefreshCw size={12} className="animate-spin text-brand-400" />
+                        Running credibility analysis and fact-checking...
+                      </div>
+                    ) : validationReport ? (
+                      <div className="space-y-3.5">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="bg-slate-950/60 border border-slate-800/40 rounded-lg p-2.5 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Credibility</p>
+                            <p className={cn(
+                              "text-sm font-extrabold mt-1",
+                              validationReport.credibility_score >= 0.7 ? "text-emerald-400" : validationReport.credibility_score >= 0.5 ? "text-amber-400" : "text-red-400"
+                            )}>
+                              {Math.round(validationReport.credibility_score * 100)}%
+                            </p>
+                          </div>
+                          <div className="bg-slate-950/60 border border-slate-800/40 rounded-lg p-2.5 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Niche Fit</p>
+                            <p className={cn(
+                              "text-sm font-extrabold mt-1",
+                              validationReport.niche_alignment >= 0.7 ? "text-purple-400" : validationReport.niche_alignment >= 0.5 ? "text-amber-400" : "text-red-400"
+                            )}>
+                              {Math.round(validationReport.niche_alignment * 100)}%
+                            </p>
+                          </div>
+                          <div className="bg-slate-950/60 border border-slate-800/40 rounded-lg p-2.5 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-wider">Viral Power</p>
+                            <p className={cn(
+                              "text-sm font-extrabold mt-1",
+                              validationReport.virality_score >= 0.7 ? "text-pink-400" : validationReport.virality_score >= 0.5 ? "text-amber-400" : "text-red-400"
+                            )}>
+                              {Math.round(validationReport.virality_score * 100)}%
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-xs space-y-1.5">
+                          <p className="font-bold text-slate-400">Fact-Check Report:</p>
+                          <p className="text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 leading-relaxed font-medium">
+                            {validationReport.fact_check_report}
+                          </p>
+                        </div>
+
+                        <div className="text-xs space-y-1.5">
+                          <p className="font-bold text-slate-400">AI Assessment Verdict:</p>
+                          <p className="text-slate-300 leading-relaxed font-medium">
+                            {validationReport.reason}
+                          </p>
+                        </div>
+
+                        {/* Virality breakdown & Claims verification grid */}
+                        <div className="grid gap-4 md:grid-cols-2 pt-3 border-t border-slate-800/40">
+                          {/* Left: Virality Score Breakdown */}
+                          {validationReport.virality_breakdown && (
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                                <Layers size={11} className="text-pink-400" />
+                                Virality Breakdown Formula
+                              </p>
+                              <div className="space-y-2 bg-slate-950/40 p-3 rounded-lg border border-slate-800/40">
+                                {Object.entries(validationReport.virality_breakdown).map(([key, val]: [string, any]) => {
+                                  const pct = Math.round(val * 100)
+                                  const name = key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                                  return (
+                                    <div key={key} className="text-[10px]">
+                                      <div className="flex justify-between font-semibold text-slate-400 mb-0.5">
+                                        <span>{name}</span>
+                                        <span className={cn(
+                                          val >= 0.7 ? "text-emerald-400" : val >= 0.5 ? "text-amber-400" : "text-rose-400"
+                                        )}>{pct}%</span>
+                                      </div>
+                                      <div className="w-full bg-slate-900 rounded-full h-1">
+                                        <div 
+                                          className={cn(
+                                            "h-1 rounded-full",
+                                            val >= 0.7 ? "bg-emerald-500" : val >= 0.5 ? "bg-amber-500" : "bg-rose-500"
+                                          )} 
+                                          style={{ width: `${pct}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Right: Claims Inspector */}
+                          {validationReport.claims && (
+                            <div className="space-y-2">
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                                <Check size={11} className="text-emerald-400" />
+                                Claims Fact-Checker
+                              </p>
+                              <div className="space-y-2">
+                                {validationReport.claims.map((c: any, i: number) => (
+                                  <div key={i} className="bg-slate-950/40 p-3 rounded-lg border border-slate-800/40 text-[10px] space-y-1">
+                                    <div className="flex justify-between items-center gap-2">
+                                      <span className="font-extrabold text-slate-200 truncate">{c.claim}</span>
+                                      <span className={cn(
+                                        "text-[8px] px-1.5 py-0.5 rounded border font-bold uppercase shrink-0",
+                                        c.status === "Verified" 
+                                          ? "bg-emerald-950/40 text-emerald-400 border-emerald-500/20" 
+                                          : c.status === "Speculative"
+                                          ? "bg-purple-950/40 text-purple-400 border-purple-500/20"
+                                          : "bg-rose-950/40 text-rose-400 border-rose-500/20"
+                                      )}>
+                                        {c.status}
+                                      </span>
+                                    </div>
+                                    <p className="text-slate-400 italic leading-snug">{c.verdict}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
 
                 {/* Dashboard Tabs Navigation */}
                 <div className="flex gap-1 border-b border-slate-700 pb-2 mb-4 overflow-x-auto">
@@ -570,10 +856,10 @@ export default function ResearchPage() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <Film size={12} /> Script Storyboard & Cues
+                        <Film size={12} /> Script Storyboard & Cues (Interactive Editor)
                       </p>
                       <button
-                        onClick={() => copyToClipboard(`[Hook]\n${analysis.punchy_hook}\n\n[Body]\n${analysis.script_body}\n\n[CTA]\n${analysis.call_to_action}`, "script")}
+                        onClick={() => copyToClipboard(`[Hook]\n${editedHook}\n\n[Body]\n${editedBody}\n\n[CTA]\n${editedCTA}`, "script")}
                         className="flex items-center gap-1.5 text-xs font-semibold text-brand-400 hover:text-brand-300 transition-all"
                       >
                         <Copy size={12} />
@@ -581,26 +867,43 @@ export default function ResearchPage() {
                       </button>
                     </div>
 
-                    <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800/60 space-y-4 max-h-[360px] overflow-y-auto">
+                    <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800/60 space-y-4 max-h-[500px] overflow-y-auto">
                       <div>
                         <span className="text-[9px] font-extrabold tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded uppercase">Attention Hook (0-3s)</span>
-                        <p className="text-sm font-extrabold text-white mt-1.5 border-l-2 border-rose-500/60 pl-3 leading-snug">
-                          {analysis.punchy_hook}
-                        </p>
+                        <input
+                          type="text"
+                          value={editedHook}
+                          onChange={(e) => setEditedHook(e.target.value)}
+                          className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-sm font-extrabold text-white mt-1.5 focus:outline-none focus:ring-1 focus:ring-rose-500/50 focus:border-rose-500/60 transition-all"
+                        />
                       </div>
                       
                       <div className="border-t border-slate-700 pt-3">
                         <span className="text-[9px] font-extrabold tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded uppercase">Script Body & B-Roll Cues</span>
-                        <div className="text-xs text-slate-300 leading-relaxed mt-2 whitespace-pre-wrap font-medium">
-                          {formatScriptBody(analysis.script_body)}
+                        <textarea
+                          rows={6}
+                          value={editedBody}
+                          onChange={(e) => setEditedBody(e.target.value)}
+                          className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 mt-2 focus:outline-none focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/60 transition-all font-mono leading-relaxed"
+                          placeholder="Write your video script body here..."
+                        />
+                        <div className="text-[10px] text-slate-500 mt-1 font-semibold mb-3">
+                          💡 Wrap B-roll/visual cues inside brackets like <code className="text-brand-400">[Visual: cue]</code> to colorize them.
+                        </div>
+                        <span className="text-[9px] font-extrabold tracking-wider text-slate-400 uppercase block mb-1">Live Storyboard Preview</span>
+                        <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap font-medium border border-slate-800/40 bg-slate-950/20 p-3 rounded-lg max-h-[160px] overflow-y-auto">
+                          {formatScriptBody(editedBody)}
                         </div>
                       </div>
 
                       <div className="border-t border-slate-700 pt-3">
                         <span className="text-[9px] font-extrabold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded uppercase">Growth call to action</span>
-                        <p className="text-xs font-bold text-emerald-400 mt-1.5 pl-3 border-l-2 border-emerald-500/60">
-                          {analysis.call_to_action}
-                        </p>
+                        <input
+                          type="text"
+                          value={editedCTA}
+                          onChange={(e) => setEditedCTA(e.target.value)}
+                          className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs font-bold text-emerald-400 mt-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500/60 transition-all"
+                        />
                       </div>
                     </div>
                   </div>
@@ -634,11 +937,61 @@ export default function ResearchPage() {
 
                       <div>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <Music size={12} className="text-sky-400" /> Music Vibe & Audio Vibe
+                          <Music size={12} className="text-sky-400" /> AI Music Recommendation
                         </p>
-                        <p className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 font-medium">
+                        <p className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 font-medium mb-3">
                           {analysis.audio_music_recommendation}
                         </p>
+                      </div>
+
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                          <Music size={12} className="text-brand-400" /> Soundtrack Vibes Shelf
+                        </p>
+                        <div className="bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 space-y-2">
+                          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-wider mb-1">
+                            Choose background track theme:
+                          </div>
+                          <div className="space-y-1.5">
+                            {MOCK_TRACKS.map((track) => (
+                              <div
+                                key={track.id}
+                                className={cn(
+                                  "flex items-center justify-between p-2 rounded-lg border text-[10px] transition-all cursor-pointer",
+                                  selectedMusicId === track.id
+                                    ? "bg-brand-500/10 border-brand-500/30 text-white"
+                                    : "bg-slate-950/20 border-slate-900 text-slate-400 hover:border-slate-800"
+                                )}
+                                onClick={() => setSelectedMusicId(track.id)}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setPlayingTrackId(playingTrackId === track.id ? null : track.id)
+                                    }}
+                                    className="px-1.5 py-0.5 rounded-md bg-slate-900 border border-slate-800 hover:bg-slate-850 text-slate-300 flex items-center justify-center font-bold text-[8px]"
+                                  >
+                                    {playingTrackId === track.id ? "⏸" : "▶"}
+                                  </button>
+                                  <div>
+                                    <div className="font-bold flex items-center gap-1.5">
+                                      <span>{track.title}</span>
+                                      <span className="text-[7px] bg-slate-800 border border-slate-700 px-1 py-0.1 rounded text-slate-500 font-semibold">{track.genre}</span>
+                                    </div>
+                                    <div className="text-[7px] text-slate-500 italic mt-0.5">{track.vibe}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-slate-500 font-mono text-[8px]">{track.duration}</span>
+                                  {selectedMusicId === track.id && (
+                                    <span className="text-brand-400 text-xs font-bold">✓</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -647,13 +1000,16 @@ export default function ResearchPage() {
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                           <MessageSquare size={12} className="text-rose-400" /> Suggested Pin Comment (Engagement-Bait)
                         </p>
-                        <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800/40 space-y-3">
-                          <p className="text-xs text-slate-300 italic font-semibold leading-relaxed">
-                            &quot;{analysis.pin_comment}&quot;
-                          </p>
+                        <div className="bg-slate-950/40 p-3.5 rounded-lg border border-slate-800/40 space-y-2">
+                          <textarea
+                            rows={3}
+                            value={editedComment}
+                            onChange={(e) => setEditedComment(e.target.value)}
+                            className="w-full bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-300 font-semibold focus:outline-none focus:ring-1 focus:ring-rose-500/50 focus:border-rose-500/60 transition-all italic leading-relaxed"
+                          />
                           <button
-                            onClick={() => copyToClipboard(analysis.pin_comment, "comment")}
-                            className="flex items-center gap-1 text-[10px] font-bold text-brand-400 hover:text-brand-300 mt-1 transition-all"
+                            onClick={() => copyToClipboard(editedComment, "comment")}
+                            className="flex items-center gap-1 text-[10px] font-bold text-brand-400 hover:text-brand-300 transition-all"
                           >
                             <Copy size={10} />
                             {copiedComment ? "Copied!" : "Copy Pinned Comment"}
@@ -735,6 +1091,38 @@ export default function ResearchPage() {
                       </div>
                     </div>
 
+                    {/* Integrated Embedded YouTube Player */}
+                    {activePreviewUrl && (
+                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 mb-2 space-y-2 animate-fade-in">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            <Play size={12} className="text-brand-400 animate-pulse" /> Footage Preview
+                          </span>
+                          <button
+                            onClick={() => setActivePreviewUrl(null)}
+                            className="text-[10px] font-extrabold text-rose-400 hover:text-rose-300 transition-all"
+                          >
+                            Close Preview
+                          </button>
+                        </div>
+                        <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-slate-800 bg-slate-900 shadow-inner">
+                          {getYouTubeId(activePreviewUrl) ? (
+                            <iframe
+                              src={`https://www.youtube.com/embed/${getYouTubeId(activePreviewUrl)}?autoplay=1`}
+                              title="B-roll Footage Preview"
+                              className="absolute inset-0 h-full w-full border-0"
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-xs text-slate-500">
+                              Preview not available for this URL format.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {crawling ? (
                       <div className="space-y-3">
                         {[...Array(3)].map((_, i) => (
@@ -765,23 +1153,37 @@ export default function ResearchPage() {
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => handleAutoGenerate(vid.url, vid.title)}
-                              disabled={generatingId !== null}
-                              className="btn-primary py-1.5 px-3 text-[10px] font-bold shrink-0 w-full md:w-auto"
-                            >
-                              {generatingId === vid.url ? (
-                                <>
-                                  <RefreshCw size={10} className="animate-spin mr-1.5" />
-                                  Ingesting...
-                                </>
-                              ) : (
-                                <>
-                                  <Play size={10} className="mr-1.5 fill-current" />
-                                  Auto-Generate
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2 w-full md:w-auto shrink-0">
+                              <button
+                                onClick={() => setActivePreviewUrl(activePreviewUrl === vid.url ? null : vid.url)}
+                                className={cn(
+                                  "py-1.5 px-3 text-[10px] font-bold rounded-lg border transition-all shrink-0 w-1/2 md:w-auto",
+                                  activePreviewUrl === vid.url
+                                    ? "bg-rose-950/40 border-rose-500/30 text-rose-400"
+                                    : "bg-slate-950/40 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700"
+                                )}
+                              >
+                                {activePreviewUrl === vid.url ? "Hide Preview" : "Preview"}
+                              </button>
+
+                              <button
+                                onClick={() => handleAutoGenerate(vid.url, vid.title)}
+                                disabled={generatingId !== null}
+                                className="btn-primary py-1.5 px-3 text-[10px] font-bold shrink-0 w-1/2 md:w-auto"
+                              >
+                                {generatingId === vid.url ? (
+                                  <>
+                                    <RefreshCw size={10} className="animate-spin mr-1.5" />
+                                    Ingesting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play size={10} className="mr-1.5 fill-current" />
+                                    Auto-Generate
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>

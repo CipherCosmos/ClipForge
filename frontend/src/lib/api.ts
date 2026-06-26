@@ -96,7 +96,8 @@ export const clipsAPI = {
     accessToken: string,
     title?: string,
     description?: string,
-    hashtags?: string
+    hashtags?: string,
+    dubLanguage?: string
   ) =>
     api.post("/publish/clip", {
       clip_id: clipId,
@@ -105,6 +106,7 @@ export const clipsAPI = {
       title,
       description,
       hashtags,
+      dub_language: dubLanguage && dubLanguage !== "original" ? dubLanguage : undefined,
     }),
   update: (id: string, data: Partial<{ title: string; caption: string; hashtags: string }>) =>
     api.patch(`/clips/${id}`, data),
@@ -135,11 +137,15 @@ export const transcriptAPI = {
 }
 
 export const researchAPI = {
-  trends: (geo?: string, source?: string) =>
-    api.get("/research/trends", { params: { geo, source } }),
+  trends: (geo?: string, source?: string, niche?: string) =>
+    api.get("/research/trends", { params: { geo, source, niche } }),
   analyze: (topic: string, tone?: string) => api.post("/research/analyze", { topic, tone }),
   crawl: (query: string, videoType?: string) =>
     api.post("/research/crawl", { query, video_type: videoType }),
+  validateTopic: (topic: string, niche?: string) =>
+    api.post("/research/validate-topic", { topic, niche }),
+  importTrend: (topic: string, niche?: string, platform?: string) =>
+    api.post("/research/import-trend", { topic, niche, platform }),
 }
 
 export const scheduleAPI = {
@@ -152,6 +158,7 @@ export const scheduleAPI = {
     access_token: string
     platform_user_id?: string
     scheduled_at: string
+    dub_language?: string
   }) => api.post("/schedule", data),
   list: (params?: { status?: string; skip?: number; limit?: number }) =>
     api.get("/schedule", { params }),

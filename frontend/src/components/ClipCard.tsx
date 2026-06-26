@@ -105,7 +105,7 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
     setPublishError("")
     setPublishSuccess(false)
     try {
-      const res = await clipsAPI.publish(clip.id, publishForm.platform, publishForm.token, publishForm.title, publishForm.description, clip.hashtags || "")
+      const res = await clipsAPI.publish(clip.id, publishForm.platform, publishForm.token, publishForm.title, publishForm.description, clip.hashtags || "", selectedLang)
       if (res.data.success) {
         setPublishSuccess(true)
         setPublishForm(null)
@@ -137,6 +137,7 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
         hashtags: scheduleTags || clip.hashtags || "",
         access_token: scheduleToken,
         scheduled_at: new Date(scheduleAt).toISOString(),
+        dub_language: selectedLang !== "original" ? selectedLang : undefined,
       })
       if (res.data) {
         setScheduleSuccess(true)
@@ -374,6 +375,16 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
             {publishForm && (
               <div className="rounded-lg border border-slate-700 bg-slate-800/80 p-3 space-y-2 mt-2">
                 <p className="text-xs font-semibold text-white">Publish to {publishForm.platform}</p>
+                {selectedLang !== "original" && localClip.dubs?.[selectedLang] && (
+                  <div className="text-[11px] text-brand-400 flex items-center gap-1.5 bg-brand-950/20 border border-brand-800/20 px-2 py-1 rounded-md">
+                    <Globe size={12} /> Publishing dubbed version ({selectedLang.toUpperCase()})
+                  </div>
+                )}
+                {selectedLang !== "original" && !localClip.dubs?.[selectedLang] && (
+                  <div className="text-[11px] text-amber-400 flex items-center gap-1.5 bg-amber-950/20 border border-amber-800/20 px-2 py-1 rounded-md">
+                    ⚠️ No dubbed version for {selectedLang.toUpperCase()} — will publish original audio
+                  </div>
+                )}
                 <input value={publishForm.token} onChange={e => setPublishForm({...publishForm, token: e.target.value})}
                   placeholder="Access token" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
                 <input value={publishForm.title} onChange={e => setPublishForm({...publishForm, title: e.target.value})}
@@ -392,6 +403,16 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
             {scheduleForm && (
               <div className="rounded-lg border border-slate-700 bg-slate-800/80 p-3 space-y-2 mt-2">
                 <p className="text-xs font-semibold text-white">Schedule Publication</p>
+                {selectedLang !== "original" && localClip.dubs?.[selectedLang] && (
+                  <div className="text-[11px] text-brand-400 flex items-center gap-1.5 bg-brand-950/20 border border-brand-800/20 px-2 py-1 rounded-md">
+                    <Globe size={12} /> Will schedule dubbed version ({selectedLang.toUpperCase()})
+                  </div>
+                )}
+                {selectedLang !== "original" && !localClip.dubs?.[selectedLang] && (
+                  <div className="text-[11px] text-amber-400 flex items-center gap-1.5 bg-amber-950/20 border border-amber-800/20 px-2 py-1 rounded-md">
+                    ⚠️ No dubbed version for {selectedLang.toUpperCase()} — will schedule original audio
+                  </div>
+                )}
                 <select value={schedulePlatform} onChange={e => setSchedulePlatform(e.target.value)}
                   className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white">
                   <option value="youtube_shorts">YouTube Shorts</option>
@@ -431,7 +452,10 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
           className="btn-primary w-full py-2.5 mt-2 shadow-lg shadow-brand-500/20"
         >
           <Download size={16} className="mr-2" />
-          Download Video
+          {selectedLang !== "original" && localClip.dubs?.[selectedLang]
+            ? `Download (${selectedLang.toUpperCase()})`
+            : "Download Video"
+          }
         </button>
       </div>
     </div>

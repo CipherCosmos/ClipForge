@@ -85,9 +85,9 @@ async def list_clips(
     try:
         all_dub_files = list_files(f"dubs/{video_id}/")
         for df in all_dub_files:
-            parts = df.split("/")
-            if len(parts) >= 3:
-                clip_key = parts[2]
+            filename = df.split("/")[-1]
+            if "_" in filename:
+                clip_key = filename.split("_")[0]
                 if clip_key not in dubs_map:
                     dubs_map[clip_key] = []
                 dubs_map[clip_key].append(df)

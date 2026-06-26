@@ -13,7 +13,8 @@ class TestTranslation:
 
     @pytest.fixture(autouse=True)
     def mock_llm_translation(self):
-        with patch("app.services.translation._translate_via_llm", return_value=None):
+        with patch("app.services.translation._translate_via_llm", return_value=None), \
+             patch("httpx.get", side_effect=Exception("Mocked out during tests")):
             yield
 
     def test_supported_languages_defined(self):

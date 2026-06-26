@@ -51,3 +51,37 @@ def get_media_duration(file_path: str, default: float = 0.0) -> float:
 
 # Backward compat alias
 get_video_duration = get_media_duration
+
+
+def standardize_youtube_url(url: str) -> str:
+    """Standardizes various YouTube video URLs to the canonical format:
+    https://www.youtube.com/watch?v={video_id}
+    """
+    import re
+    from urllib.parse import urlparse, parse_qs
+    
+    # Check if it has a video ID
+    # Pattern looks for 11 character alphanumeric strings with dashes/underscores
+    pattern = r"(?:v=|\/shorts\/|\/embed\/|\/v\/|\.be\/)([a-zA-Z0-9_-]{11})"
+    match = re.search(pattern, url)
+    if match:
+        return f"https://www.youtube.com/watch?v={match.group(1)}"
+        
+    try:
+        parsed = urlparse(url)
+        if "youtube.com" in parsed.netloc or "youtu.be" in parsed.netloc:
+            if parsed.netloc == "youtu.be":
+                video_id = parsed.path.strip("/")
+                if len(video_id) == 11:
+                    return f"https://www.youtube.com/watch?v={video_id}"
+            else:
+                qs = parse_qs(parsed.query)
+                if "v" in qs:
+                    video_id = qs["v"][0]
+                    if len(video_id) == 11:
+                        return f"https://www.youtube.com/watch?v={video_id}"
+    except Exception:
+        pass
+        
+    return url
+

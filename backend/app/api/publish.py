@@ -13,6 +13,7 @@ from app.models.clip import Clip
 from app.models.user import User
 from app.models.video import Video
 from app.services.publishing import publish_clip
+from app.services.storage import get_presigned_url, list_files
 from app.services.webhooks import (
     fire_event_async,
     get_webhooks_for_video,
@@ -32,6 +33,7 @@ class PublishRequest(BaseModel):
     access_token: str
     platform_user_id: str | None = None
     schedule_at: str | None = None
+    dub_language: str | None = None  # If set, publish the dubbed version in this language
 
 class WebhookRegisterRequest(BaseModel):
     video_id: str
@@ -52,8 +54,33 @@ async def publish_clip_endpoint(
     if not clip:
         raise HTTPException(status_code=404, detail="Clip not found")
 
+    # Resolve the file URL — use dubbed version if a dub_language is specified
+    file_url = clip.file_url
+    if req.dub_language and req.dub_language != "original":
+        dub_object_name = f"dubs/{clip.video_id}/{clip.id}_{req.dub_language}.mp4"
+        try:
+            # Verify the dubbed file actually exists in storage
+            all_dub_files = list_files(f"dubs/{clip.video_id}/")
+            if dub_object_name in all_dub_files:
+                file_url = get_presigned_url(dub_object_name)
+                logger.info("Publishing dubbed version: lang=%s, clip=%s", req.dub_language, clip.id)
+            else:
+                logger.warning(
+                    "Dubbed file not found for lang=%s clip=%s, falling back to original",
+                    req.dub_language, clip.id,
+                )
+        except Exception as e:
+            logger.warning("Failed to resolve dubbed URL, using original: %s", e)
+
+    # Presign the original file_url if it's not already a URL
+    if file_url and not file_url.startswith("http"):
+        try:
+            file_url = get_presigned_url(file_url)
+        except Exception:
+            pass
+
     result_obj = await publish_clip(
-        clip.file_url,
+        file_url,
         req.platform,
         req.title or clip.title or "",
         req.description or clip.caption or "",

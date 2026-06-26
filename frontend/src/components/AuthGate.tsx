@@ -98,10 +98,10 @@ export function AuthGate() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface p-6">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 p-6">
       <div className="w-full max-w-sm animate-fade-in">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/20">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-brand-600 shadow-lg shadow-brand-500/30">
             <Sparkles size={24} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-white">ClipForge</h1>
@@ -111,7 +111,7 @@ export function AuthGate() {
         </div>
 
         {networkError && (
-          <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-800/50 bg-amber-900/10 px-4 py-4 text-sm text-amber-400">
+          <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-800/50 bg-amber-900/10 backdrop-blur-sm px-4 py-4 text-sm text-amber-400">
             <WifiOff size={18} className="mt-0.5 shrink-0" />
             <div>
               <p className="font-medium">Backend not reachable</p>
@@ -123,8 +123,8 @@ export function AuthGate() {
           </div>
         )}
 
-        <div className="card p-6">
-          <div className="mb-6 flex rounded-xl bg-slate-900 p-1">
+        <div className="card-glass p-6">
+          <div className="mb-6 flex rounded-xl bg-slate-900/80 p-1">
             <button
               onClick={() => { setMode("login"); setError(""); setNetworkError(false) }}
               className={`flex-1 rounded-lg py-2 text-sm font-medium transition-all ${

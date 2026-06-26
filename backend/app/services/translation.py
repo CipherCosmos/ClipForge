@@ -124,7 +124,25 @@ def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> s
         logger.warning("Unsupported target language: %s", target_lang)
         return text
 
-    # Try LLM first (fast, high quality, zero setup)
+    # Try MyMemory API first (extremely fast, free, no keys, high availability)
+    try:
+        import httpx
+        url = "https://api.mymemory.translated.net/get"
+        params = {
+            "q": text,
+            "langpair": f"{source_lang}|{target_lang}"
+        }
+        resp = httpx.get(url, params=params, timeout=5.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            translated = data.get("responseData", {}).get("translatedText")
+            if translated and translated.strip() and translated != text:
+                logger.info("Translated via MyMemory API: '%s' -> '%s'", text[:50], translated[:50])
+                return translated
+    except Exception as exc:
+        logger.warning("MyMemory translation failed: %s", exc)
+
+    # Try LLM second (fast, high quality, zero setup)
     llm_translated = _translate_via_llm(text, target_lang, source_lang)
     if llm_translated:
         return llm_translated

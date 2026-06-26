@@ -61,14 +61,18 @@ def dub_clip(
         # Step 4: Get duration of original clip
         original_duration = get_media_duration(input_video, default=5.0)
 
-        # Step 5: Speed up/slow down speech to match original clip duration
-        tempo = original_duration / max(speech_duration, 1.0)
-        tempo = max(0.5, min(2.0, tempo))
+        # Step 5: Speed up speech ONLY if it is longer than the original video duration
+        if speech_duration > original_duration:
+            tempo = speech_duration / original_duration
+            # Cap tempo at 1.4 to keep the speech natural and intelligible
+            tempo = min(1.4, tempo)
+        else:
+            tempo = 1.0
 
-        # Build audio filter: tempo + normalize volume
-        audio_filter = f"atempo={tempo:.2f},loudnorm=I=-16:LRA=11:TP=-1.5"
+        # Build audio filter: tempo + normalize volume + pad with silence to match video length
+        audio_filter = f"atempo={tempo:.2f},loudnorm=I=-16:LRA=11:TP=-1.5,apad"
 
-        # Step 6: Replace audio in video
+        # Step 6: Replace audio in video (use -t to enforce original duration and prevent truncation)
         cmd = [
             "ffmpeg", "-y",
             "-i", input_video,
@@ -80,7 +84,7 @@ def dub_clip(
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-shortest",
+            "-t", f"{original_duration:.2f}",
             output_video,
         ]
 

@@ -3,6 +3,7 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -25,7 +26,10 @@ from app.services.storage import (
     ensure_bucket,
     get_presigned_url,
     upload_file,
+    copy_file,
+    copy_prefix,
 )
+from app.services.video import standardize_youtube_url
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -36,6 +40,106 @@ def _validate_url(url: str):
         raise HTTPException(status_code=400, detail="Invalid URL scheme")
     if not parsed.netloc:
         raise HTTPException(status_code=400, detail="Invalid URL")
+
+
+async def get_or_clone_video_if_exists(
+    db: AsyncSession, url: str, platform: str, user_id: uuid.UUID
+) -> Optional[Video]:
+    """Check if video has already been processed and clone it or return the existing user's record."""
+    # 1. Standardize URL
+    standard_url = standardize_youtube_url(url)
+
+    # 2. Check if the current user already has this video
+    stmt = select(Video).where(
+        Video.user_id == user_id,
+        Video.source_url == standard_url
+    ).order_by(Video.created_at.desc())
+    res = await db.execute(stmt)
+    existing_for_user = res.scalars().first()
+    if existing_for_user:
+        logger.info("Found existing video for same user with ID %s", existing_for_user.id)
+        return existing_for_user
+
+    # 3. Check if any other user has a COMPLETED video for this URL
+    stmt_other = select(Video).where(
+        Video.source_url == standard_url,
+        Video.status == VideoStatusEnum.COMPLETED
+    ).order_by(Video.created_at.desc())
+    res_other = await db.execute(stmt_other)
+    completed_other = res_other.scalars().first()
+
+    if completed_other:
+        logger.info("Deduplication Match: cloning video %s for user %s", completed_other.id, user_id)
+
+        # Clone the Video
+        cloned_video = Video(
+            user_id=user_id,
+            source_url=standard_url,
+            status=VideoStatusEnum.COMPLETED,
+            duration=completed_other.duration,
+            title=completed_other.title,
+            transcript=completed_other.transcript,
+            segments=completed_other.segments,
+            language=completed_other.language,
+            platform=platform or completed_other.platform
+        )
+        db.add(cloned_video)
+        await db.flush()  # Populate cloned_video.id
+
+        # Clone storage files if source_url is a storage path (starts with videos/)
+        if not standard_url.startswith("http"):
+            ext = Path(standard_url).suffix or ".mp4"
+            dest_source_url = f"videos/{user_id}/{cloned_video.id}{ext}"
+            copy_file(standard_url, dest_source_url)
+            cloned_video.source_url = dest_source_url
+
+        # Copy clips and compilations in storage
+        copy_prefix(f"clips/{completed_other.id}/", f"clips/{cloned_video.id}/")
+        copy_prefix(f"compilations/{completed_other.id}/", f"compilations/{cloned_video.id}/")
+
+        # Clone the Clips
+        from app.models.clip import Clip
+        stmt_clips = select(Clip).where(Clip.video_id == completed_other.id)
+        res_clips = await db.execute(stmt_clips)
+        other_clips = res_clips.scalars().all()
+        for clip in other_clips:
+            # Replace old video ID with new video ID in the paths
+            file_url = clip.file_url
+            if file_url and str(completed_other.id) in file_url:
+                file_url = file_url.replace(str(completed_other.id), str(cloned_video.id))
+            thumbnail_url = clip.thumbnail_url
+            if thumbnail_url and str(completed_other.id) in thumbnail_url:
+                thumbnail_url = thumbnail_url.replace(str(completed_other.id), str(cloned_video.id))
+
+            cloned_clip = Clip(
+                video_id=cloned_video.id,
+                start_time=clip.start_time,
+                end_time=clip.end_time,
+                caption=clip.caption,
+                score=clip.score,
+                file_url=file_url,
+                thumbnail_url=thumbnail_url,
+                title=clip.title,
+                hashtags=clip.hashtags
+            )
+            db.add(cloned_clip)
+
+        # Create completed Jobs
+        for jtype in [JobTypeEnum.TRANSCRIPTION, JobTypeEnum.HIGHLIGHT, JobTypeEnum.RENDER]:
+            cloned_job = Job(
+                video_id=cloned_video.id,
+                type=jtype,
+                status=JobStatusEnum.DONE,
+                progress=1.0
+            )
+            db.add(cloned_job)
+
+        await db.commit()
+        await db.refresh(cloned_video)
+        return cloned_video
+
+    return None
+
 
 
 async def _video_to_response(video: Video, db: AsyncSession | None = None) -> VideoResponse:
@@ -138,14 +242,20 @@ async def import_video(
     db: AsyncSession = Depends(get_db),
 ):
     _validate_url(payload.source_url)
-
     ensure_bucket()
-
     preset = get_preset(payload.platform or "youtube_shorts")
+
+    # Standardize URL
+    standardized = standardize_youtube_url(payload.source_url)
+
+    # Check/clone if exists
+    cloned = await get_or_clone_video_if_exists(db, standardized, preset.name, current_user.id)
+    if cloned:
+        return await _video_to_response(cloned, db)
 
     video = Video(
         user_id=current_user.id,
-        source_url=payload.source_url,
+        source_url=standardized,
         status=VideoStatusEnum.UPLOADED,
         duration=None,
         title="Importing from YouTube...",
@@ -188,10 +298,17 @@ async def import_batch_videos(
 
     for url in urls:
         _validate_url(url)
+        standardized = standardize_youtube_url(url)
+
+        # Check/clone if exists
+        cloned = await get_or_clone_video_if_exists(db, standardized, preset.name, current_user.id)
+        if cloned:
+            created.append({"id": str(cloned.id), "url": url, "cloned": True})
+            continue
 
         video = Video(
             user_id=current_user.id,
-            source_url=url,
+            source_url=standardized,
             status=VideoStatusEnum.UPLOADED,
             duration=None,
             title="Importing from YouTube...",
@@ -208,7 +325,7 @@ async def import_batch_videos(
         from app.workers.transcription import run_transcription
         run_transcription.delay(str(video.id))
 
-        created.append({"id": str(video.id), "url": url})
+        created.append({"id": str(video.id), "url": url, "cloned": False})
 
     await db.commit()
     return {"videos": created, "count": len(created)}
