@@ -12,6 +12,9 @@ import {
   Trash2, Split, Merge, Clock, Globe, Type, Film,
   Check, Loader2, AlertTriangle
 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 
 interface Segment {
   index: number
@@ -210,10 +213,10 @@ export default function TranscriptEditorPage() {
   }
 
   const getSegmentColor = (index: number) => {
-    if (segments.length === 0) return "border-slate-700"
-    if (index === 0) return "border-l-emerald-500"
-    if (index === segments.length - 1) return "border-l-slate-500"
-    return "border-l-blue-500"
+    if (segments.length === 0) return "border-l-border"
+    if (index === 0) return "border-l-brand-400"
+    if (index === segments.length - 1) return "border-l-violet-400"
+    return "border-l-brand-500"
   }
 
   const mergeAllShortSegments = () => {
@@ -346,64 +349,71 @@ export default function TranscriptEditorPage() {
 
   if (loading || (videoLoading && !video)) {
     return (
-      <div className="flex items-center justify-center py-32">
-        <Loader2 className="h-8 w-8 animate-spin text-brand-400" />
+      <div className="flex items-center justify-center py-32 text-muted-foreground gap-2">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-400" />
+        <span>Loading transcript editor...</span>
       </div>
     )
   }
 
   return (
-    <div className="animate-fade-in h-full">
+    <div className="animate-fade-in space-y-6">
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <button onClick={() => router.push(`/app/videos/${id}`)} className="btn-ghost -ml-2 shrink-0">
-          <ArrowLeft size={18} />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="truncate text-lg sm:text-xl font-bold text-white">
-            {video?.title || "Transcript Editor"}
-          </h1>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <Button variant="outline" size="icon" className="h-9 w-9 rounded-lg border-border bg-card shrink-0" onClick={() => router.push(`/app/videos/${id}`)}>
+            <ArrowLeft size={16} />
+          </Button>
+          <div className="min-w-0">
+            <h1 className="truncate text-lg sm:text-xl font-bold text-foreground">
+              Transcript Editor
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate max-w-md">
+              {video?.title || "Video Transcript"}
+            </p>
+          </div>
         </div>
+
         <div className="flex items-center gap-2 flex-wrap">
           {hasUnsavedChanges && (
-            <span className="text-xs text-amber-400 flex items-center gap-1">
-              <AlertTriangle size={12} /> Unsaved
+            <span className="text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md flex items-center gap-1.5 animate-pulse">
+              <AlertTriangle size={12} /> Unsaved Changes
             </span>
           )}
           {saveStatus === "saved" && !hasUnsavedChanges && (
-            <span className="text-xs text-emerald-400 flex items-center gap-1">
-              <Check size={12} /> Saved
+            <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md flex items-center gap-1.5">
+              <Check size={12} /> Saved to Database
             </span>
           )}
-          <button
+          <Button
             onClick={handleSave}
             disabled={!hasUnsavedChanges || saving}
-            className={cn(
-              "btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5",
-              !hasUnsavedChanges && "opacity-50 cursor-not-allowed"
-            )}
+            size="sm"
+            className="text-xs h-9 font-semibold gap-1.5 shadow-md"
           >
             {saving ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 size={12} className="animate-spin" />
             ) : (
-              <Save size={14} />
+              <Save size={12} />
             )}
-            Save
-          </button>
-          <button
+            Save Changes
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setShowRegenerateConfirm(true)}
             disabled={regenerating}
-            className="btn-secondary text-xs px-2.5 py-1.5 flex items-center gap-1.5"
+            className="text-xs h-9 bg-card border-border font-semibold gap-1.5 text-muted-foreground hover:text-foreground"
           >
-            <RefreshCw size={14} className={cn(regenerating && "animate-spin")} />
+            <RefreshCw size={12} className={cn(regenerating && "animate-spin")} />
             Regenerate
-          </button>
-          <button onClick={handleExportSrt} className="btn-ghost p-2" title="Export SRT">
-            <Download size={16} />
-          </button>
-          <button onClick={() => fileInputRef.current?.click()} className="btn-ghost p-2" title="Import SRT">
-            <Upload size={16} />
-          </button>
+          </Button>
+          <Button variant="outline" size="icon" className="h-9 w-9 bg-card border-border shrink-0" onClick={handleExportSrt} title="Export SRT">
+            <Download size={14} className="text-muted-foreground hover:text-foreground" />
+          </Button>
+          <Button variant="outline" size="icon" className="h-9 w-9 bg-card border-border shrink-0" onClick={() => fileInputRef.current?.click()} title="Import SRT">
+            <Upload size={14} className="text-muted-foreground hover:text-foreground" />
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -414,168 +424,186 @@ export default function TranscriptEditorPage() {
         </div>
       </div>
 
-      {/* Stats bar */}
+      {/* Stats and Action sub-bar */}
       {segments.length > 0 && (
-        <div className="flex items-center gap-4 mb-4 text-xs text-slate-400 flex-wrap">
-          <span className="flex items-center gap-1">
-            <Globe size={12} /> {transcript?.language?.toUpperCase() || "EN"}
-          </span>
-          <span className="flex items-center gap-1">
-            <Type size={12} /> {wordCount} words
-          </span>
-          <span className="flex items-center gap-1">
-            <Clock size={12} /> {segmentCount} segments
-          </span>
-          <div className="flex gap-2 ml-auto">
-            <button onClick={mergeAllShortSegments} className="btn-ghost text-[11px] px-2 py-1 flex items-center gap-1">
-              <Merge size={12} /> Merge Short
-            </button>
-            <button onClick={splitLongSegments} className="btn-ghost text-[11px] px-2 py-1 flex items-center gap-1">
-              <Split size={12} /> Split Long
-            </button>
-            <button onClick={recalculateTimings} className="btn-ghost text-[11px] px-2 py-1 flex items-center gap-1">
-              <Clock size={12} /> Recalc Timings
-            </button>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-muted/20 border border-border/40 p-3 rounded-xl">
+          <div className="flex items-center gap-4 text-xs font-semibold text-muted-foreground">
+            <span className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-md border border-border/60">
+              <Globe size={13} className="text-brand-400" /> Language: {transcript?.language?.toUpperCase() || "EN"}
+            </span>
+            <span className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-md border border-border/60">
+              <Type size={13} className="text-brand-400" /> {wordCount} Words
+            </span>
+            <span className="flex items-center gap-1.5 bg-card px-2.5 py-1 rounded-md border border-border/60">
+              <Clock size={13} className="text-brand-400" /> {segmentCount} Segments
+            </span>
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={mergeAllShortSegments} className="text-xs h-8 bg-card border-border font-semibold gap-1.5">
+              <Merge size={12} /> Merge Short (&lt;1s)
+            </Button>
+            <Button variant="outline" size="sm" onClick={splitLongSegments} className="text-xs h-8 bg-card border-border font-semibold gap-1.5">
+              <Split size={12} /> Split Long (&gt;10s)
+            </Button>
+            <Button variant="outline" size="sm" onClick={recalculateTimings} className="text-xs h-8 bg-card border-border font-semibold gap-1.5">
+              <Clock size={12} /> Auto timings
+            </Button>
           </div>
         </div>
       )}
 
-      {/* Error / No transcript */}
+      {/* Error State */}
       {error && !segments.length && (
-        <div className="card flex flex-col items-center py-16 px-4">
-          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-800">
-            <Film size={28} className="text-slate-600" />
-          </div>
-          <p className="text-lg text-slate-400">{error}</p>
-          <div className="flex gap-3 mt-6">
-            <button onClick={() => fileInputRef.current?.click()} className="btn-secondary flex items-center gap-2">
-              <Upload size={16} /> Import SRT
-            </button>
-            <button onClick={() => router.push(`/app/videos/${id}`)} className="btn-primary">
+        <Card className="border border-dashed border-border bg-card/10 p-12 text-center">
+          <Film size={40} className="mx-auto text-muted-foreground/60 mb-4" />
+          <h3 className="text-base font-semibold text-foreground">{error}</h3>
+          <div className="flex gap-3 justify-center mt-5">
+            <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="text-xs gap-2">
+              <Upload size={14} /> Import SRT
+            </Button>
+            <Button onClick={() => router.push(`/app/videos/${id}`)} className="text-xs">
               Back to Video
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
       )}
 
-      {/* Main editor */}
+      {/* Main Workspace Layout */}
       {segments.length > 0 && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Video Preview */}
-          <div className="w-full lg:w-[30%] lg:sticky lg:top-4 lg:self-start">
-            <div className="card p-0 overflow-hidden">
-              <video
-                ref={videoRef}
-                src={video?.source_url || ""}
-                controls
-                preload="metadata"
-                className="w-full bg-black"
-              />
-            </div>
-            <p className="text-[11px] text-slate-500 mt-2 text-center">
-              Click timestamp to seek
+        <div className="flex flex-col lg:flex-row gap-6 items-start">
+          {/* Sticky Video Player Box */}
+          <div className="w-full lg:w-[32%] lg:sticky lg:top-6 lg:self-start shrink-0">
+            <Card className="border border-border/60 bg-card/40 overflow-hidden shadow-lg">
+              <CardContent className="p-0">
+                <video
+                  ref={videoRef}
+                  src={video?.source_url || ""}
+                  controls
+                  preload="metadata"
+                  className="w-full bg-black aspect-video block"
+                />
+              </CardContent>
+            </Card>
+            <p className="text-[10px] text-muted-foreground font-semibold mt-2.5 text-center bg-muted/40 border border-border/40 py-1 rounded-md">
+              Tip: Click timestamp buttons to seek video
             </p>
           </div>
 
-          {/* Segments list */}
-          <div className="flex-1 space-y-2 min-w-0">
-            {segments.map((seg) => (
-              <div
-                key={seg.index}
-                ref={(el) => { if (el) segmentRefs.current.set(seg.index, el) }}
-                className={cn(
-                  "card p-3 border-l-4 transition-all duration-150 group",
-                  getSegmentColor(seg.index),
-                  activeSegmentIndex === seg.index && "ring-1 ring-brand-500/50"
-                )}
-                onClick={() => setActiveSegmentIndex(seg.index)}
-              >
-                <div className="flex items-start gap-3">
-                  {/* Timestamp */}
-                  <button
-                    onClick={() => seekVideo(seg.start)}
-                    className="shrink-0 text-xs font-mono text-brand-400 bg-brand-900/20 hover:bg-brand-900/40 rounded px-2 py-1 transition-colors mt-1"
-                    title="Click to seek video"
-                  >
-                    {formatTime(seg.start)} - {formatTime(seg.end)}
-                  </button>
-
-                  {/* Time inputs */}
-                  <div className="flex gap-1 items-center shrink-0">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={seg.start}
-                      onChange={(e) => updateSegment(seg.index, { start: parseFloat(e.target.value) || 0 })}
-                      className="w-16 bg-slate-800 border border-slate-700 rounded text-[11px] text-slate-300 px-1.5 py-1 text-center font-mono"
-                    />
-                    <span className="text-slate-600 text-xs">-</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={seg.end}
-                      onChange={(e) => updateSegment(seg.index, { end: parseFloat(e.target.value) || 0 })}
-                      className="w-16 bg-slate-800 border border-slate-700 rounded text-[11px] text-slate-300 px-1.5 py-1 text-center font-mono"
-                    />
-                  </div>
-
-                  {/* Text area */}
-                  <div className="flex-1 min-w-0">
-                    <textarea
-                      ref={(el) => { if (el) textareaRefs.current.set(seg.index, el) }}
-                      value={seg.text}
-                      onChange={(e) => updateSegment(seg.index, { text: e.target.value })}
-                      onKeyDown={(e) => handleTextareaKeyDown(e, seg.index)}
-                      rows={1}
-                      className="w-full bg-transparent text-sm text-slate-200 font-mono leading-relaxed resize-none outline-none border-0 p-0 placeholder-slate-600"
-                      placeholder="Enter segment text..."
-                      style={{ height: "auto", minHeight: "1.5rem" }}
-                      onInput={(e) => {
-                        const el = e.currentTarget
-                        el.style.height = "auto"
-                        el.style.height = el.scrollHeight + "px"
-                      }}
-                    />
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-slate-300"
-                      title="Split at cursor"
-                      onClickCapture={(e) => {
-                        e.stopPropagation()
-                        const textarea = textareaRefs.current.get(seg.index)
-                        const cursorPos = textarea?.selectionStart ?? Math.floor(seg.text.length / 2)
-                        splitSegment(seg.index, cursorPos)
-                      }}
-                    >
-                      <Split size={14} />
-                    </button>
-                    {segments.length > 1 && seg.index < segments.length - 1 && (
+          {/* Timeline scroll pane */}
+          <div className="flex-1 w-full space-y-3">
+            {segments.map((seg) => {
+              const active = activeSegmentIndex === seg.index
+              return (
+                <Card
+                  key={seg.index}
+                  ref={(el) => { if (el) segmentRefs.current.set(seg.index, el) }}
+                  className={cn(
+                    "border-l-4 transition-all duration-300 bg-card/25 border-border hover:bg-card/45 hover:border-border/80 group",
+                    getSegmentColor(seg.index),
+                    active && "border-l-brand-500 bg-card/70 ring-1 ring-brand-500/20 shadow-md"
+                  )}
+                  onClick={() => setActiveSegmentIndex(seg.index)}
+                >
+                  <CardContent className="p-3.5 space-y-3 sm:space-y-0 sm:flex sm:items-start sm:gap-4">
+                    {/* Timing Controls Column */}
+                    <div className="flex sm:flex-col items-center sm:items-stretch gap-2 shrink-0">
+                      {/* Seek Button */}
                       <button
-                        onClick={(e) => { e.stopPropagation(); mergeSegments(seg.index) }}
-                        className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-slate-300"
-                        title="Merge with next"
+                        onClick={(e) => { e.stopPropagation(); seekVideo(seg.start) }}
+                        className="text-[10px] font-bold font-mono text-brand-400 bg-brand-500/10 hover:bg-brand-500/20 border border-brand-500/20 rounded px-2.5 py-1 transition-colors cursor-pointer text-center whitespace-nowrap"
+                        title="Seek Video to Start"
                       >
-                        <Merge size={14} />
+                        {formatTime(seg.start)} - {formatTime(seg.end)}
                       </button>
-                    )}
-                    {segments.length > 1 && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteSegment(seg.index) }}
-                        className="p-1 rounded hover:bg-red-900/30 text-slate-500 hover:text-red-400"
-                        title="Delete segment"
+
+                      {/* Precise Timing Inputs */}
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={seg.start}
+                          onChange={(e) => updateSegment(seg.index, { start: parseFloat(e.target.value) || 0 })}
+                          className="h-7 w-14 text-[10px] font-bold text-center font-mono bg-background border-border p-1"
+                        />
+                        <span className="text-muted-foreground text-xs">&rarr;</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={seg.end}
+                          onChange={(e) => updateSegment(seg.index, { end: parseFloat(e.target.value) || 0 })}
+                          className="h-7 w-14 text-[10px] font-bold text-center font-mono bg-background border-border p-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Textarea Input */}
+                    <div className="flex-1 min-w-0">
+                      <textarea
+                        ref={(el) => { if (el) textareaRefs.current.set(seg.index, el) }}
+                        value={seg.text}
+                        onChange={(e) => updateSegment(seg.index, { text: e.target.value })}
+                        onKeyDown={(e) => handleTextareaKeyDown(e, seg.index)}
+                        rows={1}
+                        className={cn(
+                          "w-full bg-transparent text-sm text-foreground font-mono leading-relaxed resize-none outline-none border-0 p-0 placeholder:text-muted-foreground/60 transition-all",
+                          active ? "text-foreground font-semibold" : "text-muted-foreground/95"
+                        )}
+                        placeholder="Enter segment text..."
+                        style={{ height: "auto", minHeight: "1.5rem" }}
+                        onInput={(e) => {
+                          const el = e.currentTarget
+                          el.style.height = "auto"
+                          el.style.height = el.scrollHeight + "px"
+                        }}
+                      />
+                    </div>
+
+                    {/* Inline Actions */}
+                    <div className="flex sm:flex-col items-center gap-1.5 shrink-0 justify-end opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                        title="Split at cursor"
+                        onClickCapture={(e) => {
+                          e.stopPropagation()
+                          const textarea = textareaRefs.current.get(seg.index)
+                          const cursorPos = textarea?.selectionStart ?? Math.floor(seg.text.length / 2)
+                          splitSegment(seg.index, cursorPos)
+                        }}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+                        <Split size={13} />
+                      </Button>
+                      {segments.length > 1 && seg.index < segments.length - 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          onClick={(e) => { e.stopPropagation(); mergeSegments(seg.index) }}
+                          title="Merge with next segment"
+                        >
+                          <Merge size={13} />
+                        </Button>
+                      )}
+                      {segments.length > 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                          onClick={(e) => { e.stopPropagation(); deleteSegment(seg.index) }}
+                          title="Delete segment"
+                        >
+                          <Trash2 size={13} />
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
           </div>
         </div>
       )}
@@ -584,20 +612,19 @@ export default function TranscriptEditorPage() {
       {showRegenerateConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={() => setShowRegenerateConfirm(false)}>
-          <div className="rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl max-w-sm w-full mx-4 animate-scale-in"
+          <div className="rounded-xl border border-border bg-card p-5 shadow-2xl max-w-sm w-full mx-4 animate-scale-in"
             onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-white mb-2">Regenerate Transcript?</h3>
-            <p className="text-sm text-slate-400 mb-4">
-              This will re-run transcription on the original video source. Existing clips will be preserved but you will need to re-render. Continue?
+            <h3 className="text-sm font-bold text-foreground mb-1.5">Regenerate Transcript?</h3>
+            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
+              This will re-run transcription on the original video source using Whisper. Existing clips will be preserved, but you will need to re-render. Continue?
             </p>
             <div className="flex gap-3">
-              <button onClick={() => setShowRegenerateConfirm(false)} className="flex-1 btn-ghost py-2 text-sm">
+              <Button variant="outline" onClick={() => setShowRegenerateConfirm(false)} className="flex-1 py-1.5 text-xs bg-background border-border">
                 Cancel
-              </button>
-              <button onClick={handleRegenerate} disabled={regenerating}
-                className="flex-1 btn-primary py-2 text-sm">
-                {regenerating ? "Regenerating..." : "Regenerate"}
-              </button>
+              </Button>
+              <Button onClick={handleRegenerate} disabled={regenerating} className="flex-1 py-1.5 text-xs">
+                {regenerating ? "Regenerating..." : "Yes, Regenerate"}
+              </Button>
             </div>
           </div>
         </div>
@@ -607,20 +634,19 @@ export default function TranscriptEditorPage() {
       {showClipsExistPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={() => setShowClipsExistPrompt(false)}>
-          <div className="rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl max-w-sm w-full mx-4 animate-scale-in"
+          <div className="rounded-xl border border-border bg-card p-5 shadow-2xl max-w-sm w-full mx-4 animate-scale-in"
             onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-white mb-2">Transcript Updated</h3>
-            <p className="text-sm text-slate-400 mb-4">
-              Transcript saved successfully. Existing clips may reference the old transcript. Would you like to re-render clips?
+            <h3 className="text-sm font-bold text-foreground mb-1.5">Transcript Updated</h3>
+            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
+              Transcript saved successfully. Existing clips may reference the old transcript. Would you like to return to the video workspace now?
             </p>
             <div className="flex gap-3">
-              <button onClick={() => setShowClipsExistPrompt(false)} className="flex-1 btn-ghost py-2 text-sm">
-                Dismiss
-              </button>
-              <button onClick={() => { setShowClipsExistPrompt(false); router.push(`/app/videos/${id}`) }}
-                className="flex-1 btn-primary py-2 text-sm">
-                Go to Video
-              </button>
+              <Button variant="outline" onClick={() => setShowClipsExistPrompt(false)} className="flex-1 py-1.5 text-xs bg-background border-border">
+                Stay Here
+              </Button>
+              <Button onClick={() => { setShowClipsExistPrompt(false); router.push(`/app/videos/${id}`) }} className="flex-1 py-1.5 text-xs">
+                Go to Video Detail
+              </Button>
             </div>
           </div>
         </div>

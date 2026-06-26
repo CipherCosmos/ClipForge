@@ -137,15 +137,15 @@ export const transcriptAPI = {
 }
 
 export const researchAPI = {
-  trends: (geo?: string, source?: string, niche?: string) =>
-    api.get("/research/trends", { params: { geo, source, niche } }),
+  trends: (geo?: string, source?: string, niche?: string, q?: string) =>
+    api.get("/research/trends", { params: { geo, source, niche, q } }),
   analyze: (topic: string, tone?: string) => api.post("/research/analyze", { topic, tone }),
   crawl: (query: string, videoType?: string) =>
     api.post("/research/crawl", { query, video_type: videoType }),
   validateTopic: (topic: string, niche?: string) =>
     api.post("/research/validate-topic", { topic, niche }),
-  importTrend: (topic: string, niche?: string, platform?: string) =>
-    api.post("/research/import-trend", { topic, niche, platform }),
+  importTrend: (topic: string, niche?: string, platform?: string, url?: string) =>
+    api.post("/research/import-trend", { topic, niche, platform, url }),
 }
 
 export const scheduleAPI = {
@@ -155,7 +155,8 @@ export const scheduleAPI = {
     title?: string
     description?: string
     hashtags?: string
-    access_token: string
+    access_token?: string
+    platform_account_id?: string
     platform_user_id?: string
     scheduled_at: string
     dub_language?: string

@@ -1,6 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
+import { Label } from "@/components/ui/label"
 
 const CAPTION_STYLES = [
   { id: "classic", label: "Classic", desc: "Black bg, white text" },
@@ -18,23 +19,24 @@ interface Props {
 export function CaptionStyleSelector({ value, onChange }: Props) {
   return (
     <div className="space-y-2">
-      <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+      <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
         Caption Style
-      </label>
+      </Label>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {CAPTION_STYLES.map((style) => (
           <button
             key={style.id}
+            type="button"
             onClick={() => onChange(style.id)}
             className={cn(
-              "rounded-lg border p-2.5 text-left transition-all",
+              "rounded-lg border p-2.5 text-left transition-all cursor-pointer",
               value === style.id
-                ? "border-brand-500 bg-brand-500/10"
-                : "border-slate-700 bg-slate-800/50 hover:border-slate-600"
+                ? "border-brand-500 bg-brand-500/10 text-foreground"
+                : "border-border bg-card hover:bg-accent hover:text-accent-foreground text-foreground"
             )}
           >
-            <p className="text-sm font-medium text-white">{style.label}</p>
-            <p className="text-[10px] text-slate-400 mt-0.5">{style.desc}</p>
+            <p className="text-sm font-medium">{style.label}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{style.desc}</p>
           </button>
         ))}
       </div>

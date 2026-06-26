@@ -3,6 +3,7 @@
 import { memo, useState } from "react"
 import { Film, Loader2, Sparkles, CheckCircle2, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Card } from "@/components/ui/card"
 
 interface ProcessingOverlayProps {
   videoUrl: string | null
@@ -37,9 +38,9 @@ export const ProcessingOverlay = memo(function ProcessingOverlay({
     : "bg-indigo-500"
 
   return (
-    <div className="card overflow-hidden">
+    <Card>
       {/* Video player */}
-      <div className="relative aspect-video bg-slate-900">
+      <div className="relative aspect-video bg-muted">
         {videoUrl && !videoError ? (
           <video
             src={videoUrl}
@@ -50,32 +51,32 @@ export const ProcessingOverlay = memo(function ProcessingOverlay({
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
-            <Film size={40} className="text-slate-700" />
+            <Film size={40} className="text-muted-foreground" />
           </div>
         )}
 
         {/* Processing overlay */}
         {status === "processing" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface/80 backdrop-blur-sm">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
             <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/20">
-              <Sparkles size={28} className="text-white" />
+              <Sparkles size={28} className="text-foreground" />
             </div>
-            <h3 className="mb-2 text-lg font-semibold text-white">
+            <h3 className="mb-2 text-lg font-semibold text-foreground">
               Processing Your Video
             </h3>
-            <p className="mb-6 text-sm text-slate-400">
+            <p className="mb-6 text-sm text-muted-foreground">
               AI is analyzing, scoring, and generating your clips
             </p>
 
             {/* Determinate progress bar */}
             <div className="w-full max-w-md space-y-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-300">{label}</span>
+                <span className="text-muted-foreground">{label}</span>
                 <span className="font-mono text-sm font-semibold text-brand-400">
                   {Math.round(progress)}%
                 </span>
               </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
                   className={cn(
                     "h-full rounded-full transition-all duration-700 ease-out",
@@ -85,7 +86,7 @@ export const ProcessingOverlay = memo(function ProcessingOverlay({
                 />
               </div>
               {message && (
-                <p className="text-center text-xs text-slate-500">{message}</p>
+                <p className="text-center text-xs text-muted-foreground">{message}</p>
               )}
             </div>
           </div>
@@ -101,19 +102,19 @@ export const ProcessingOverlay = memo(function ProcessingOverlay({
 
         {/* Error state */}
         {status === "failed" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-surface/60 backdrop-blur-sm">
+          <div className="absolute inset-0 flex items-center justify-center bg-background/60 backdrop-blur-sm">
             <div className="flex flex-col items-center">
               <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-red-500/20">
                 <AlertCircle size={28} className="text-red-400" />
               </div>
-              <p className="text-lg font-semibold text-white">Processing failed</p>
+              <p className="text-lg font-semibold text-foreground">Processing failed</p>
               {error && (
-                <p className="mt-1 text-sm text-slate-400">{error}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{error}</p>
               )}
             </div>
           </div>
         )}
       </div>
-    </div>
+    </Card>
   )
 })

@@ -46,12 +46,12 @@ describe("VideoCard", () => {
 
   it("renders viral score", () => {
     render(<VideoCard video={mockVideo} />)
-    expect(screen.getByText("85%")).toBeInTheDocument()
+    expect(screen.getByText(/85%/)).toBeInTheDocument()
   })
 
   it("renders platform label", () => {
     render(<VideoCard video={mockVideo} />)
-    expect(screen.getByText("youtube shorts")).toBeInTheDocument()
+    expect(screen.getByText(/youtube shorts/i)).toBeInTheDocument()
   })
 
   it("calls onDelete when delete clicked", async () => {

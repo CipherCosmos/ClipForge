@@ -28,7 +28,8 @@ class ScheduleCreateRequest(BaseModel):
     title: str = ""
     description: str = ""
     hashtags: str = ""
-    access_token: str
+    access_token: str = ""
+    platform_account_id: str | None = None
     platform_user_id: str | None = None
     scheduled_at: str  # ISO 8601 datetime
     dub_language: str | None = None  # Publish dubbed version if available
@@ -98,6 +99,29 @@ async def create_schedule(
     if scheduled_dt <= datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
 
+    # Resolve access_token from platform_account_id if provided
+    from app.models.platform_account import PlatformAccount
+
+    access_token = req.access_token
+    platform_account_id = None
+    if req.platform_account_id:
+        acc_result = await db.execute(
+            select(PlatformAccount).where(
+                PlatformAccount.id == uuid.UUID(req.platform_account_id),
+                PlatformAccount.user_id == current_user.id,
+            )
+        )
+        account = acc_result.scalar_one_or_none()
+        if account:
+            try:
+                access_token = decrypt_token(account.access_token)
+                platform_account_id = account.id
+            except Exception:
+                raise HTTPException(status_code=500, detail="Failed to decrypt account credentials")
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Provide access_token or platform_account_id")
+
     schedule = Schedule(
         user_id=current_user.id,
         clip_id=clip_uuid,
@@ -105,8 +129,9 @@ async def create_schedule(
         title=req.title or clip.title or "",
         description=req.description or clip.caption or "",
         hashtags=req.hashtags or clip.hashtags or "",
-        access_token=encrypt_token(req.access_token),
-        platform_user_id=req.platform_user_id,
+        access_token=encrypt_token(access_token),
+        platform_account_id=platform_account_id,
+        platform_user_id=req.platform_user_id or (account.platform_user_id if account else None),
         dub_language=req.dub_language if req.dub_language and req.dub_language != "original" else None,
         scheduled_at=scheduled_dt,
         status="pending",

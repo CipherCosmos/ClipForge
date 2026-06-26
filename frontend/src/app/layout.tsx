@@ -3,6 +3,9 @@ import "./globals.css"
 import { ReduxProvider } from "@/store/provider"
 import { AuthInitializer } from "@/components/AuthInitializer"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { Toaster } from "@/components/ui/sonner"
+import { ThemeProvider } from "@/components/ThemeProvider"
 
 export const metadata: Metadata = {
   title: {
@@ -13,6 +16,10 @@ export const metadata: Metadata = {
   keywords: ["video", "shorts", "viral", "AI", "clip creator", "video editor", "auto clip"],
   authors: [{ name: "ClipForge" }],
   robots: { index: true, follow: true },
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
   openGraph: {
     title: "ClipForge — AI Viral Short Creator",
     description: "Turn any video into viral shorts with AI-powered auto-clipping.",
@@ -37,12 +44,17 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="antialiased min-h-screen bg-surface" role="application" aria-label="ClipForge application">
-        <ReduxProvider>
-          <AuthInitializer />
-          <ErrorBoundary>{children}</ErrorBoundary>
-        </ReduxProvider>
+    <html lang="en" suppressHydrationWarning>
+      <body className="antialiased min-h-screen bg-background text-foreground" role="application" aria-label="ClipForge application">
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+          <TooltipProvider>
+            <ReduxProvider>
+              <AuthInitializer />
+              <ErrorBoundary>{children}</ErrorBoundary>
+            </ReduxProvider>
+            <Toaster />
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

@@ -4,6 +4,11 @@ import { useState, useEffect } from "react"
 import { accountsAPI } from "@/lib/api"
 import { Plus, Trash2, Key, Loader2, ExternalLink, ChevronDown, ChevronUp, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface Account {
   id: string
@@ -166,127 +171,146 @@ export function ConnectedAccounts() {
     }
   }
 
-  if (loading) return <div className="card-glass p-6"><Loader2 size={16} className="animate-spin text-slate-400" /></div>
+  if (loading) return (
+    <Card size="sm">
+      <CardContent className="flex items-center justify-center py-6">
+        <Loader2 size={16} className="animate-spin text-muted-foreground" />
+      </CardContent>
+    </Card>
+  )
 
   return (
-    <div className="card-glass p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Key size={20} className="text-brand-400" />
-          <h2 className="text-lg font-bold text-white">Connected Accounts</h2>
-        </div>
-        <button onClick={() => { setShowForm(!showForm); setShowGuide(false) }} className="btn-secondary text-xs">
-          <Plus size={14} /> Add Account
-        </button>
-      </div>
-
-      {accounts.length === 0 && !showForm && (
-        <div className="rounded-lg border border-slate-700/30 bg-slate-800/30 p-6 text-center">
-          <p className="text-sm text-slate-400 mb-4">No accounts connected yet.</p>
-          <button onClick={() => setShowForm(true)} className="btn-primary text-sm">
-            <Plus size={14} /> Connect Your First Account
-          </button>
-        </div>
-      )}
-
-      {showForm && (
-        <div className="rounded-lg border border-slate-700/30 bg-slate-800/30 p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Platform</label>
-              <select value={platform} onChange={e => { setPlatform(e.target.value); setShowGuide(false) }} className="input text-sm">
-                {Object.entries(PLATFORM_GUIDES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-400 mb-1.5 block">Label</label>
-              <input value={label} onChange={e => setLabel(e.target.value)} className="input text-sm" placeholder={currentGuide.label} />
-            </div>
+    <Card className="py-0">
+      <CardContent className="p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Key size={20} className="text-brand-400" />
+            <h2 className="text-lg font-bold text-foreground">Connected Accounts</h2>
           </div>
+          <Button variant="outline" size="sm" onClick={() => { setShowForm(!showForm); setShowGuide(false) }}>
+            <Plus size={14} /> Add Account
+          </Button>
+        </div>
 
-          <button onClick={() => setShowGuide(!showGuide)}
-            className="flex items-center gap-2 text-xs text-brand-400 hover:text-brand-300 transition-colors">
-            <ExternalLink size={12} />
-            {showGuide ? "Hide" : "Show"} detailed setup guide for {currentGuide.label}
-            {showGuide ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
+        {accounts.length === 0 && !showForm && (
+          <div className="rounded-lg border border-border bg-muted/30 p-6 text-center">
+            <p className="text-sm text-muted-foreground mb-4">No accounts connected yet.</p>
+            <Button size="sm" onClick={() => setShowForm(true)}>
+              <Plus size={14} /> Connect Your First Account
+            </Button>
+          </div>
+        )}
 
-          {showGuide && (
-            <div className="rounded-lg border border-brand-500/20 bg-brand-500/5 p-4 space-y-3">
-              <p className="text-xs font-semibold text-brand-400">How to connect your {currentGuide.label} account:</p>
-              <ol className="list-decimal list-inside space-y-2">
-                {currentGuide.steps.map((step, i) => (
-                  <li key={i} className="text-xs text-slate-300 leading-relaxed">{step}</li>
-                ))}
-              </ol>
-              <div className="flex items-start gap-2 rounded-md bg-amber-900/20 border border-amber-700/30 p-3 text-xs text-amber-400">
-                <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                <p>{currentGuide.note}</p>
-              </div>
-              <a href={currentGuide.guideUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 mt-1">
-                <ExternalLink size={12} />
-                Open {currentGuide.guideLabel} (new tab)
-              </a>
-            </div>
-          )}
-
-          {platform === "youtube_shorts" && (
+        {showForm && (
+          <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-slate-400 mb-1.5 block">Client ID</label>
-                <input type="password" value={clientId} onChange={e => setClientId(e.target.value)}
-                  className="input text-sm font-mono text-[11px]" placeholder="From Google Cloud Console" />
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Platform</Label>
+                <Select value={platform} onValueChange={(v) => { if (v) { setPlatform(v); setShowGuide(false) } }}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(PLATFORM_GUIDES).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <label className="text-xs font-medium text-slate-400 mb-1.5 block">Client Secret</label>
-                <input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)}
-                  className="input text-sm font-mono text-[11px]" placeholder="From Google Cloud Console" />
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-muted-foreground">Label</Label>
+                <Input value={label} onChange={e => setLabel(e.target.value)} placeholder={currentGuide.label} />
               </div>
             </div>
-          )}
-          <div>
-            <label className="text-xs font-medium text-slate-400 mb-1.5 block">
-              {platform === "youtube_shorts" ? "Refresh Token" : "Access Token"} <span className="text-red-400">*</span>
-            </label>
-            <input type="password" value={token} onChange={e => setToken(e.target.value)}
-              className="input text-sm font-mono"
-              placeholder={platform === "youtube_shorts" ? "Paste your Refresh Token (1//...)" : "Paste your API token here..."} />
-          </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
-
-          <div className="flex gap-2">
-            <button onClick={handleAdd} disabled={saving || !token} className="btn-primary text-sm flex-1">
-              {saving ? <Loader2 size={14} className="animate-spin" /> : null}
-              {saving ? "Connecting..." : `Connect ${currentGuide.label}`}
+            <button onClick={() => setShowGuide(!showGuide)}
+              className="inline-flex items-center gap-2 text-xs text-brand-400 hover:text-brand-300 transition-colors">
+              <ExternalLink size={12} />
+              {showGuide ? "Hide" : "Show"} detailed setup guide for {currentGuide.label}
+              {showGuide ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
-            <button onClick={() => { setShowForm(false); setShowGuide(false) }} className="btn-ghost text-sm">Cancel</button>
-          </div>
-        </div>
-      )}
 
-      {accounts.length > 0 && (
-        <div className="space-y-2">
-          {accounts.map(a => {
-            const g = PLATFORM_GUIDES[a.platform]
-            return (
-              <div key={a.id} className="flex items-center justify-between rounded-lg border border-slate-700/30 p-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className={cn("text-lg shrink-0", g?.color || "text-slate-400")}>{g?.icon || "🔗"}</span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-200 truncate">{a.label}</p>
-                    <p className="text-xs text-slate-500">{g?.label} · {a.access_token_masked}</p>
-                  </div>
+            {showGuide && (
+              <div className="rounded-lg border border-brand-500/20 bg-brand-500/5 p-4 space-y-3">
+                <p className="text-xs font-semibold text-brand-400">How to connect your {currentGuide.label} account:</p>
+                <ol className="list-decimal list-inside space-y-2">
+                  {currentGuide.steps.map((step, i) => (
+                    <li key={i} className="text-xs text-foreground leading-relaxed">{step}</li>
+                  ))}
+                </ol>
+                <div className="flex items-start gap-2 rounded-md bg-amber-900/20 border border-amber-700/30 p-3 text-xs text-amber-400">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <p>{currentGuide.note}</p>
                 </div>
-                <button onClick={() => handleDelete(a.id)} className="btn-ghost p-1.5 text-red-400 hover:bg-red-900/20 shrink-0 ml-2">
-                  <Trash2 size={14} />
-                </button>
+                <a href={currentGuide.guideUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 mt-1">
+                  <ExternalLink size={12} />
+                  Open {currentGuide.guideLabel} (new tab)
+                </a>
               </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
+            )}
+
+            {platform === "youtube_shorts" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">Client ID</Label>
+                  <Input type="password" value={clientId} onChange={e => setClientId(e.target.value)}
+                    className="font-mono text-[11px]" placeholder="From Google Cloud Console" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">Client Secret</Label>
+                  <Input type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)}
+                    className="font-mono text-[11px]" placeholder="From Google Cloud Console" />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">
+                {platform === "youtube_shorts" ? "Refresh Token" : "Access Token"} <span className="text-red-400">*</span>
+              </Label>
+              <Input type="password" value={token} onChange={e => setToken(e.target.value)}
+                className="font-mono text-[11px]"
+                placeholder={platform === "youtube_shorts" ? "Paste your Refresh Token (1//...)" : "Paste your API token here..."} />
+            </div>
+
+            {error && <p className="text-xs text-red-400">{error}</p>}
+
+            <div className="flex gap-2">
+              <Button onClick={handleAdd} disabled={saving || !token} size="sm" className="flex-1">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+                {saving ? "Connecting..." : `Connect ${currentGuide.label}`}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); setShowGuide(false) }}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {accounts.length > 0 && (
+          <div className="space-y-2">
+            {accounts.map(a => {
+              const g = PLATFORM_GUIDES[a.platform]
+              return (
+                <div key={a.id} className="flex items-center justify-between rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={cn("text-lg shrink-0", g?.color || "text-muted-foreground")}>{g?.icon || "🔗"}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{a.label}</p>
+                      <p className="text-xs text-muted-foreground/70">{g?.label} · {a.access_token_masked}</p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="icon-xs" onClick={() => handleDelete(a.id)}
+                    className="text-red-400 hover:text-red-400 hover:bg-red-900/20 shrink-0 ml-2">
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

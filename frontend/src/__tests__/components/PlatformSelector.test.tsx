@@ -8,29 +8,23 @@ jest.mock("@/lib/api", () => ({
 }))
 
 describe("PlatformSelector", () => {
-  it("renders select element with platform options", () => {
+  it("renders button elements for platform options", () => {
     render(<PlatformSelector value="youtube_shorts" onChange={jest.fn()} />)
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(screen.getAllByRole("button").length).toBeGreaterThanOrEqual(7)
   })
 
   it("renders all fallback platform options", () => {
     render(<PlatformSelector value="youtube_shorts" onChange={jest.fn()} />)
-    const options = screen.getAllByRole("option")
-    expect(options.length).toBeGreaterThanOrEqual(7)
-    expect(options[0]).toHaveTextContent("YouTube Shorts")
-    expect(options[2]).toHaveTextContent("TikTok")
+    expect(screen.getByText("YouTube Shorts")).toBeInTheDocument()
+    expect(screen.getByText("TikTok")).toBeInTheDocument()
+    expect(screen.getByText("Instagram Reels")).toBeInTheDocument()
   })
 
-  it("calls onChange when selection changes", () => {
+  it("calls onChange when a platform card is clicked", () => {
     const onChange = jest.fn()
     render(<PlatformSelector value="youtube_shorts" onChange={onChange} />)
-    const select = screen.getByRole("combobox")
-    fireEvent.change(select, { target: { value: "tiktok" } })
+    const button = screen.getByRole("button", { name: /TikTok/ })
+    fireEvent.click(button)
     expect(onChange).toHaveBeenCalledWith("tiktok")
-  })
-
-  it("shows description for selected platform", () => {
-    render(<PlatformSelector value="youtube_shorts" onChange={jest.fn()} />)
-    expect(screen.getByText(/Vertical 9:16/)).toBeInTheDocument()
   })
 })

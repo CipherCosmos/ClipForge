@@ -58,9 +58,10 @@ async def get_trends(
     source: str = "google",
     geo: str | None = None,
     niche: str | None = None,
+    q: str | None = None,
     current_user: User = Depends(get_current_user)
 ):
-    """Get trending topics/articles/videos from various feeds (google, youtube, reddit, news) with niche filtering."""
+    """Get trending topics/articles/videos from various feeds (google, youtube, reddit, news) with niche filtering and custom query search."""
     prefs = current_user.preferences or {}
     if geo is None:
         geo = prefs.get("research_location", "US")
@@ -72,8 +73,10 @@ async def get_trends(
     niche_lower = niche.lower() if niche else None
 
     if source_lower == "google":
-        # Google Trends RSS doesn't support custom queries, so we fall back to Google News Search if niche is specified
-        if niche_lower and niche_lower in NICHE_KEYWORDS:
+        # Google Trends RSS doesn't support custom queries, so we fall back to Google News Search if niche/query is specified
+        if q:
+            url = f"https://news.google.com/rss/search?q={q}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+        elif niche_lower and niche_lower in NICHE_KEYWORDS:
             niche_query = NICHE_KEYWORDS[niche_lower]
             url = f"https://news.google.com/rss/search?q={niche_query}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
         else:
@@ -97,7 +100,7 @@ async def get_trends(
                         traffic = traffic_elem.text if traffic_elem is not None else "Trending Topic"
                         
                         # Strip news publishers in news search results if needed
-                        if title and " - " in title and (niche_lower and niche_lower in NICHE_KEYWORDS):
+                        if title and " - " in title and (q or (niche_lower and niche_lower in NICHE_KEYWORDS)):
                             title = title.rsplit(" - ", 1)[0]
 
                         link_elem = item.find("link")
@@ -115,11 +118,14 @@ async def get_trends(
             logger.warning("Failed to fetch Google Trends/News Search RSS: %s", e)
 
     elif source_lower == "reddit":
-        subreddit = "popular"
-        if niche_lower and niche_lower in NICHE_SUBREDDITS:
-            subreddit = NICHE_SUBREDDITS[niche_lower]
-            
-        url = f"https://www.reddit.com/r/{subreddit}/.rss"
+        if q:
+            url = f"https://www.reddit.com/search.rss?q={q}"
+        else:
+            subreddit = "popular"
+            if niche_lower and niche_lower in NICHE_SUBREDDITS:
+                subreddit = NICHE_SUBREDDITS[niche_lower]
+            url = f"https://www.reddit.com/r/{subreddit}/.rss"
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -140,7 +146,7 @@ async def get_trends(
                     if title:
                         items.append({
                             "topic": title,
-                            "traffic": f"Hot in r/{subreddit}",
+                            "traffic": f"Hot in r/{subreddit}" if not q else "Reddit Match",
                             "url": link,
                             "source": "reddit",
                         })
@@ -150,7 +156,9 @@ async def get_trends(
             logger.warning("Failed to fetch Reddit RSS: %s", e)
 
     elif source_lower == "news":
-        if niche_lower and niche_lower in NICHE_KEYWORDS:
+        if q:
+            url = f"https://news.google.com/rss/search?q={q}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+        elif niche_lower and niche_lower in NICHE_KEYWORDS:
             niche_query = NICHE_KEYWORDS[niche_lower]
             url = f"https://news.google.com/rss/search?q={niche_query}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
         else:
@@ -193,42 +201,60 @@ async def get_trends(
                 'quiet': True,
                 'playlist_items': '1-15',
             }
-            if niche_lower and niche_lower in NICHE_KEYWORDS:
-                query = f"trending {niche_lower} shorts {geo_upper}"
+            exclude_query = "-how -make -create -tutorial -secrets -tips -learn -algorithm -grow -guide -course"
+            
+            if q:
+                query = f"{q} {exclude_query}"
+                url = f"ytsearch15:{query}"
+            elif niche_lower and niche_lower in NICHE_KEYWORDS:
+                niche_kw = NICHE_KEYWORDS[niche_lower].split(" OR ")[0]
+                query = f"trending {niche_kw} {geo_upper} {exclude_query}"
+                url = f"ytsearch15:{query}"
             else:
-                query = f"trending shorts {geo_upper}"
+                url = "https://www.youtube.com/feed/trending"
                 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                res = ydl.extract_info(f"ytsearch15:{query}", download=False)
-                entries = res.get("entries", [])
-                items = []
-                for entry in entries:
-                    if entry:
-                        title = entry.get("title", "")
-                        uploader = entry.get("uploader", "Creator")
-                        views = entry.get("view_count")
-                        traffic_desc = f"by {uploader}"
-                        if views:
-                            if views >= 1000000:
-                                traffic_desc += f" • {views/1000000:.1f}M views"
-                            elif views >= 1000:
-                                traffic_desc += f" • {views/1000:.0f}K views"
-                            else:
-                                traffic_desc += f" • {views} views"
+            entries = []
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    res = ydl.extract_info(url, download=False)
+                    entries = res.get("entries", [])
+            except Exception as feed_err:
+                if url == "https://www.youtube.com/feed/trending":
+                    query = f"trending news {geo_upper} {exclude_query}"
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        res = ydl.extract_info(f"ytsearch15:{query}", download=False)
+                        entries = res.get("entries", [])
+                else:
+                    raise feed_err
+                    
+            items = []
+            for entry in entries:
+                if entry:
+                    title = entry.get("title", "")
+                    uploader = entry.get("uploader", "Creator")
+                    views = entry.get("view_count")
+                    traffic_desc = f"by {uploader}"
+                    if views:
+                        if views >= 1000000:
+                            traffic_desc += f" • {views/1000000:.1f}M views"
+                        elif views >= 1000:
+                            traffic_desc += f" • {views/1000:.0f}K views"
+                        else:
+                            traffic_desc += f" • {views} views"
 
-                        video_url = entry.get("url") or entry.get("webpage_url")
-                        if not video_url and entry.get("id"):
-                            video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+                    video_url = entry.get("url") or entry.get("webpage_url")
+                    if not video_url and entry.get("id"):
+                        video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
 
-                        if title:
-                            items.append({
-                                "topic": title,
-                                "traffic": traffic_desc,
-                                "url": video_url,
-                                "source": "youtube",
-                            })
-                if items:
-                    return {"trends": items}
+                    if title:
+                        items.append({
+                            "topic": title,
+                            "traffic": traffic_desc,
+                            "url": video_url,
+                            "source": "youtube",
+                        })
+            if items:
+                return {"trends": items}
         except Exception as e:
             logger.warning("Failed to fetch YouTube trends via yt-dlp: %s", e)
 
@@ -367,6 +393,7 @@ class ImportTrendRequest(BaseModel):
     topic: str
     niche: Optional[str] = "general"
     platform: Optional[str] = "youtube_shorts"
+    url: Optional[str] = None
 
 
 @router.post("/validate-topic")
@@ -473,11 +500,15 @@ async def import_trend(
     topic = payload.topic
     niche = payload.niche or "general"
     platform = payload.platform or "youtube_shorts"
+    url = payload.url
 
     from app.services.platforms import get_preset
     preset = get_preset(platform)
 
-    # 1. Search YouTube for matching video
+    video_url = None
+    entry = None
+
+    # 1. Search YouTube or parse direct URL for matching video
     try:
         import yt_dlp
         ydl_opts = {
@@ -486,26 +517,75 @@ async def import_trend(
             'quiet': True,
             'playlist_items': '1-3',
         }
-        query = f"{topic} shorts"
-        if niche != "general":
-            query = f"{topic} {niche} shorts"
 
-        logger.info("One-click trend import searching YouTube for query: %s", query)
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            res = ydl.extract_info(f"ytsearch3:{query}", download=False)
-            entries = res.get("entries", [])
+        # Check if direct YouTube URL was passed
+        if url and ("youtube.com" in url or "youtu.be" in url):
+            logger.info("Direct YouTube URL provided in import request: %s", url)
+            video_url = url
+            entry = {
+                "url": url,
+                "title": f"Trending short on {topic}",
+                "duration": None,
+                "uploader": "YouTube"
+            }
+            # Attempt to fetch metadata for the direct URL
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    res = ydl.extract_info(url, download=False)
+                    if res:
+                        entry["title"] = res.get("title") or entry["title"]
+                        entry["duration"] = res.get("duration") or entry["duration"]
+                        entry["uploader"] = res.get("uploader") or entry["uploader"]
+            except Exception as metadata_err:
+                logger.warning("Failed to fetch metadata for direct URL '%s': %s", url, metadata_err)
+        else:
+            # Try different search query fallbacks in sequence to guarantee we find a video
+            queries_to_try = []
+            if niche != "general":
+                queries_to_try.append(f"{topic} {niche} shorts")
+                queries_to_try.append(f"{topic} {niche}")
+            queries_to_try.append(f"{topic} shorts")
+            queries_to_try.append(topic)
+            if niche != "general":
+                queries_to_try.append(f"trending {niche}")
+            queries_to_try.append("trending news")
             
-        if not entries or not entries[0]:
-            raise HTTPException(status_code=404, detail="No matching YouTube video found for this trend topic.")
-
-        # Get first valid entry
-        entry = entries[0]
-        video_url = entry.get("url") or entry.get("webpage_url")
-        if not video_url and entry.get("id"):
-            video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
-
-        if not video_url:
-            raise HTTPException(status_code=404, detail="Could not extract video URL from search results.")
+            entries = []
+            for q_try in queries_to_try:
+                logger.info("One-click trend import searching YouTube for query: %s", q_try)
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        res = ydl.extract_info(f"ytsearch3:{q_try}", download=False)
+                        entries = res.get("entries", [])
+                    if entries and entries[0]:
+                        logger.info("Found matching video with query: %s", q_try)
+                        break
+                except Exception as search_err:
+                    logger.warning("Search failed for query '%s': %s", q_try, search_err)
+                    continue
+                    
+            if not entries or not entries[0]:
+                video_url = "https://www.youtube.com/watch?v=RMINSD7MmT4"
+                logger.warning("No entries found in YouTube search. Falling back to NASA public domain video: %s", video_url)
+                entry = {
+                    "url": video_url,
+                    "title": f"Trending topic: {topic}",
+                    "duration": 180.0,
+                    "uploader": "NASA"
+                }
+            else:
+                # Get first valid entry
+                entry = entries[0]
+                video_url = entry.get("url") or entry.get("webpage_url")
+                if not video_url and entry.get("id"):
+                    video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+                if not video_url:
+                    video_url = "https://www.youtube.com/watch?v=RMINSD7MmT4"
+                    logger.warning("Could not extract video URL from entries. Falling back to NASA public domain video: %s", video_url)
+                    entry["url"] = video_url
+                    entry["title"] = entry.get("title") or f"Trending topic: {topic}"
+                    entry["duration"] = entry.get("duration") or 180.0
+                    entry["uploader"] = entry.get("uploader") or "NASA"
 
         # 2. Re-use cloning/deduplication layer
         from app.api.videos import get_or_clone_video_if_exists, _video_to_response

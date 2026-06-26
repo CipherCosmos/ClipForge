@@ -65,10 +65,15 @@ class MockAsyncSession:
         pass
 
     async def flush(self):
-        pass
+        for obj in self.added:
+            if hasattr(obj, "id") and obj.id is None:
+                obj.id = uuid.uuid4()
 
     async def refresh(self, obj):
-        pass
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = uuid.uuid4()
+        if hasattr(obj, "created_at") and obj.created_at is None:
+            obj.created_at = datetime.now(timezone.utc)
 
     def add(self, obj):
         self.added.append(obj)
@@ -264,3 +269,37 @@ class TestResearchNiche:
         data = r.json()
         assert data["id"] == str(cloned_video.id)
         assert data["status"] == "completed"
+
+    @pytest.mark.asyncio
+    @patch("yt_dlp.YoutubeDL")
+    @patch("app.api.videos.get_or_clone_video_if_exists")
+    @patch("app.workers.transcription.run_transcription.delay")
+    async def test_import_trend_with_direct_url(self, mock_delay, mock_get_or_clone, mock_ytdl):
+        # Mock metadata extraction
+        mock_instance = MagicMock()
+        mock_instance.extract_info.return_value = {
+            "title": "Direct Video Title",
+            "duration": 120,
+            "uploader": "Direct Uploader"
+        }
+        mock_ytdl.return_value.__enter__.return_value = mock_instance
+        mock_get_or_clone.return_value = None  # Force new video creation
+        
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            r = await ac.post(
+                "/api/research/import-trend",
+                json={
+                    "topic": "Direct Topic",
+                    "niche": "general",
+                    "platform": "youtube_shorts",
+                    "url": "https://www.youtube.com/watch?v=direct12345"
+                }
+            )
+            
+        assert r.status_code == 200
+        data = r.json()
+        assert data["source_url"] == "https://www.youtube.com/watch?v=direct12345"
+        assert data["title"] == "Direct Video Title"
+        assert data["duration"] == 120.0
+        mock_delay.assert_called_once()

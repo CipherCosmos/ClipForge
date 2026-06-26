@@ -27,12 +27,12 @@ describe("ClipCard", () => {
 
   it("renders score label", () => {
     render(<ClipCard clip={mockClip} />)
-    expect(screen.getByText("High · 75")).toBeInTheDocument()
+    expect(screen.getByText(/75%/)).toBeInTheDocument()
   })
 
   it("renders duration", () => {
     render(<ClipCard clip={mockClip} />)
-    expect(screen.getByText("0:15")).toBeInTheDocument()
+    expect(screen.getByText(/0:15/)).toBeInTheDocument()
   })
 
   it("renders caption", () => {
@@ -55,6 +55,6 @@ describe("ClipCard", () => {
 
   it("renders download button", () => {
     render(<ClipCard clip={mockClip} />)
-    expect(screen.getByText("Download Video")).toBeInTheDocument()
+    expect(screen.getByText(/Download/)).toBeInTheDocument()
   })
 })

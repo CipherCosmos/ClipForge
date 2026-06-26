@@ -33,6 +33,7 @@ class Schedule(Base):
     scheduled_at = Column(DateTime(timezone=True), nullable=False)
     status = Column(String(50), nullable=False, default="pending")
     result = Column(JSON, nullable=True)
+    platform_account_id = Column(UUID(as_uuid=True), ForeignKey("platform_accounts.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

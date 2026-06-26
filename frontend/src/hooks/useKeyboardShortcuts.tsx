@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import { Button } from "@/components/ui/button"
 
 interface Shortcut {
   key: string
@@ -66,26 +67,26 @@ export function useKeyboardShortcuts() {
         onClick={() => setShowCheatSheet(false)}
       >
         <div
-          className="rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl max-w-sm w-full mx-4 animate-scale-in"
+          className="rounded-xl border border-border bg-card p-6 shadow-2xl max-w-sm w-full mx-4 animate-scale-in text-card-foreground"
           onClick={(e) => e.stopPropagation()}
         >
-          <h3 className="text-lg font-bold text-white mb-4">Keyboard Shortcuts</h3>
+          <h3 className="text-lg font-bold text-foreground mb-4">Keyboard Shortcuts</h3>
           <div className="space-y-3">
             {SHORTCUTS.map((shortcut) => (
               <div key={shortcut.key} className="flex items-center justify-between">
-                <span className="text-sm text-slate-300">{shortcut.description}</span>
-                <kbd className="rounded-md bg-slate-800 px-2 py-1 text-xs font-mono text-slate-200 border border-slate-700 min-w-[28px] text-center">
+                <span className="text-sm text-muted-foreground">{shortcut.description}</span>
+                <kbd className="rounded-md bg-muted px-2 py-1 text-xs font-mono text-foreground border border-border min-w-[28px] text-center">
                   {shortcut.label}
                 </kbd>
               </div>
             ))}
           </div>
-          <button
+          <Button
             onClick={() => setShowCheatSheet(false)}
-            className="btn-primary w-full mt-6 py-2 text-sm"
+            className="w-full mt-6 h-10 text-sm"
           >
             Close
-          </button>
+          </Button>
         </div>
       </div>
     )

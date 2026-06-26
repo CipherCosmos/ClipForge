@@ -3,6 +3,9 @@
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { authAPI } from "@/lib/api"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Sparkles, Loader2, AlertCircle, CheckCircle } from "lucide-react"
 
 function ResetForm() {
@@ -37,51 +40,57 @@ function ResetForm() {
 
   if (done) {
     return (
-      <div className="card p-6 text-center">
-        <CheckCircle size={48} className="mx-auto mb-4 text-emerald-400" />
-        <h2 className="text-lg font-bold text-white mb-2">Password Reset!</h2>
-        <p className="text-sm text-slate-400 mb-6">Your password has been updated successfully.</p>
-        <button onClick={() => router.push("/app")} className="btn-primary">Sign In</button>
-      </div>
+      <Card className="p-6 text-center">
+        <CardContent className="p-0">
+          <CheckCircle size={48} className="mx-auto mb-4 text-emerald-400" />
+          <CardTitle className="text-lg font-bold mb-2">Password Reset!</CardTitle>
+          <CardDescription className="mb-6">Your password has been updated successfully.</CardDescription>
+          <Button onClick={() => router.push("/app")}>Sign In</Button>
+        </CardContent>
+      </Card>
     )
   }
 
   return (
-    <div className="card p-6">
-      <h2 className="text-lg font-bold text-white mb-2">Set New Password</h2>
-      <p className="text-sm text-slate-400 mb-6">Enter your new password below.</p>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <input type="password" placeholder="New password" value={password}
-          onChange={(e) => setPassword(e.target.value)} required minLength={8}
-          className="input" autoComplete="new-password" />
-        <input type="password" placeholder="Confirm new password" value={confirm}
-          onChange={(e) => setConfirm(e.target.value)} required minLength={8}
-          className="input" autoComplete="new-password" />
-        {error && (
-          <div className="flex items-start gap-2 rounded-lg border border-red-800/50 bg-red-900/10 px-4 py-3 text-sm text-red-400">
-            <AlertCircle size={16} className="mt-0.5 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-        <button type="submit" disabled={submitting || !token} className="btn-primary w-full">
-          {submitting ? <Loader2 size={16} className="animate-spin mx-auto" /> : "Reset Password"}
-        </button>
-      </form>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg font-bold">Set New Password</CardTitle>
+        <CardDescription>Enter your new password below.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input type="password" placeholder="New password" value={password}
+            onChange={(e) => setPassword(e.target.value)} required minLength={8}
+            autoComplete="new-password" />
+          <Input type="password" placeholder="Confirm new password" value={confirm}
+            onChange={(e) => setConfirm(e.target.value)} required minLength={8}
+            autoComplete="new-password" />
+          {error && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-800/50 bg-red-900/10 px-4 py-3 text-sm text-red-400">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+          <Button type="submit" disabled={submitting || !token} className="w-full">
+            {submitting ? <Loader2 size={16} className="animate-spin mx-auto" /> : "Reset Password"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   )
 }
 
 export default function ResetPasswordPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface p-6">
+    <div className="flex min-h-screen items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm animate-fade-in">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 shadow-lg shadow-brand-500/20">
-            <Sparkles size={24} className="text-white" />
+            <Sparkles size={24} className="text-foreground" />
           </div>
-          <h1 className="text-2xl font-bold text-white">ClipForge</h1>
+          <h1 className="text-2xl font-bold text-foreground">ClipForge</h1>
         </div>
-        <Suspense fallback={<div className="card p-6 text-center text-slate-400">Loading...</div>}>
+        <Suspense fallback={<Card><CardContent className="p-6 text-center text-muted-foreground">Loading...</CardContent></Card>}>
           <ResetForm />
         </Suspense>
       </div>
