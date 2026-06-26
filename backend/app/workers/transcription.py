@@ -55,7 +55,7 @@ def run_transcription(self, video_id: str):
                 from app.services.storage import upload_file
                 from app.services.video import download_from_url, get_video_duration
 
-                tmp_path = download_from_url(video.source_url)
+                tmp_path, meta = download_from_url(video.source_url)
 
                 try:
                     duration = get_video_duration(tmp_path)
@@ -63,6 +63,12 @@ def run_transcription(self, video_id: str):
                         video.duration = duration
                 except Exception:
                     pass
+
+                # Update title from YouTube metadata
+                if meta.get("title"):
+                    video.title = meta["title"][:200]
+                if meta.get("thumbnail") and not video.thumbnail_url:
+                    video.thumbnail_url = meta["thumbnail"]
 
                 object_name = f"videos/{video.user_id}/{uuid.uuid4()}.mp4"
                 upload_file(tmp_path, object_name)

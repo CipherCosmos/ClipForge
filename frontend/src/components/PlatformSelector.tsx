@@ -4,7 +4,8 @@ import { useState, useEffect } from "react"
 import { Monitor } from "lucide-react"
 
 interface Platform {
-  value: string
+  value?: string
+  name?: string
   label: string
   description: string
   width: number
@@ -18,13 +19,13 @@ interface PlatformSelectorProps {
 }
 
 const FALLBACK_PLATFORMS: Platform[] = [
-  { value: "youtube_shorts", label: "YouTube Shorts", description: "Vertical 9:16 format for YouTube Shorts", width: 1080, height: 1920, max_duration: 60 },
-  { value: "instagram_reels", label: "Instagram Reels", description: "Vertical 9:16 format for Instagram Reels", width: 1080, height: 1920, max_duration: 90 },
-  { value: "tiktok", label: "TikTok", description: "Vertical 9:16 format for TikTok", width: 1080, height: 1920, max_duration: 180 },
-  { value: "facebook_reels", label: "Facebook Reels", description: "Vertical 9:16 format for Facebook Reels", width: 1080, height: 1920, max_duration: 60 },
-  { value: "twitter_video", label: "X/Twitter Video", description: "Landscape 16:9 format for X/Twitter", width: 1920, height: 1080, max_duration: 140 },
-  { value: "landscape", label: "Landscape 16:9", description: "Standard landscape 16:9 format", width: 1920, height: 1080, max_duration: 600 },
-  { value: "square", label: "Square 1:1", description: "Square 1:1 format for all platforms", width: 1080, height: 1080, max_duration: 600 },
+  { value: "youtube_shorts", name: "youtube_shorts", label: "YouTube Shorts", description: "Vertical 9:16 format for YouTube Shorts", width: 1080, height: 1920, max_duration: 60 },
+  { value: "instagram_reels", name: "instagram_reels", label: "Instagram Reels", description: "Vertical 9:16 format for Instagram Reels", width: 1080, height: 1920, max_duration: 90 },
+  { value: "tiktok", name: "tiktok", label: "TikTok", description: "Vertical 9:16 format for TikTok", width: 1080, height: 1920, max_duration: 180 },
+  { value: "facebook_reels", name: "facebook_reels", label: "Facebook Reels", description: "Vertical 9:16 format for Facebook Reels", width: 1080, height: 1920, max_duration: 60 },
+  { value: "twitter_video", name: "twitter_video", label: "X/Twitter Video", description: "Landscape 16:9 format for X/Twitter", width: 1920, height: 1080, max_duration: 140 },
+  { value: "landscape", name: "landscape", label: "Landscape 16:9", description: "Standard landscape 16:9 format", width: 1920, height: 1080, max_duration: 600 },
+  { value: "square", name: "square", label: "Square 1:1", description: "Square 1:1 format for all platforms", width: 1080, height: 1080, max_duration: 600 },
 ]
 
 export function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
@@ -42,7 +43,7 @@ export function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
     )
   }, [])
 
-  const selected = platforms.find((p) => p.value === value)
+  const selected = platforms.find((p) => (p.value || p.name) === value)
 
   return (
     <div>
@@ -56,8 +57,8 @@ export function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
           onChange={(e) => onChange(e.target.value)}
           className="input pl-10 appearance-none"
         >
-          {platforms.map((p) => (
-            <option key={p.value} value={p.value}>
+          {platforms.map((p, idx) => (
+            <option key={p.value || p.name || idx} value={p.value || p.name}>
               {p.label} ({p.width}x{p.height})
             </option>
           ))}

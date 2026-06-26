@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { Film, Clock, TrendingUp, Trash2, CheckSquare, Square } from "lucide-react"
+import { Clock, TrendingUp, Trash2, CheckSquare, Square } from "lucide-react"
 import { cn, formatDuration, formatDate, formatScore, statusLabel, statusColor } from "@/lib/utils"
 import { useState } from "react"
 import { videosAPI } from "@/lib/api"
@@ -84,8 +84,10 @@ export function VideoCard({ video, onDelete, selected, onSelectChange }: VideoCa
             loading="lazy"
           />
         ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <Film size={32} className="text-slate-700" />
+          <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-900">
+            <span className="text-4xl font-bold text-slate-600 select-none">
+              {(video.title || "?")[0].toUpperCase()}
+            </span>
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-60" />

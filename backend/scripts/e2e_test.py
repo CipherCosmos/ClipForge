@@ -96,7 +96,7 @@ def main():
             patch("app.workers.transcription.download_file"), \
             patch("app.workers.transcription.SyncSessionLocal") as mock_session_cls, \
             patch("app.workers.nlp.run_nlp") as mock_nlp, \
-            patch("app.services.video.download_from_url", return_value="mock_video.mp4"), \
+            patch("app.services.video.download_from_url", return_value=("mock_video.mp4", {"title": "Test"})), \
             patch("app.services.video.get_video_duration", return_value=12.5), \
             patch("app.services.storage.upload_file"):
 

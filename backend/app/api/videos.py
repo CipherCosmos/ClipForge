@@ -149,6 +149,11 @@ async def _video_to_response(video: Video, db: AsyncSession | None = None) -> Vi
             resp.source_url = get_presigned_url(video.source_url)
         except Exception:
             pass
+    if video.thumbnail_url and not video.thumbnail_url.startswith("http"):
+        try:
+            resp.thumbnail_url = get_presigned_url(video.thumbnail_url)
+        except Exception:
+            pass
     if video.segments:
         resp.viral_score = max(
             (s.get("viral_score", 0.0) for s in video.segments if isinstance(s, dict)),

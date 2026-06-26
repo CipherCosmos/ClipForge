@@ -68,21 +68,6 @@ export const fetchVideo = createAsyncThunk(
     const id = typeof arg === "string" ? arg : arg.id
     const res = await videosAPI.get(id)
     return res.data as Video
-  },
-  {
-    condition: (arg, { getState }) => {
-      const id = typeof arg === "string" ? arg : arg.id
-      const force = typeof arg === "string" ? false : !!arg.force
-      if (force) return true
-      const state = getState() as RootState
-      if (state.videos.currentVideo?.id === id) {
-        return false
-      }
-      const existing = state.videos.videos.find(v => v.id === id)
-      if (existing && existing.status === "completed") {
-        return false
-      }
-    }
   }
 )
 

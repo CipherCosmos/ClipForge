@@ -38,6 +38,7 @@ export default function VideoDetailPage() {
     loading: s.clips.loading,
   }), shallowEqual)
   const [sortKey, setSortKey] = useState<SortKey>("score")
+  const [pageLoaded, setPageLoaded] = useState(false)
   const id = params.id as string
 
   const isProcessing = video?.status === "uploaded" || video?.status === "processing"
@@ -51,8 +52,11 @@ export default function VideoDetailPage() {
     if (!id) return
     if (fetchedRef.current === id) return
     fetchedRef.current = id
-    dispatch(fetchVideo(id))
-    dispatch(fetchClipsThunk(id))
+    setPageLoaded(false)
+    Promise.all([
+      dispatch(fetchVideo(id)),
+      dispatch(fetchClipsThunk(id)),
+    ]).finally(() => setPageLoaded(true))
   }, [id, dispatch])
 
   // Refresh when processing completes
@@ -94,7 +98,7 @@ export default function VideoDetailPage() {
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   }), [clips, sortKey])
 
-  if (videoLoading && !video) return <DetailSkeleton />
+  if (!pageLoaded || (videoLoading && !video)) return <DetailSkeleton />
 
   if (!video) {
     return (

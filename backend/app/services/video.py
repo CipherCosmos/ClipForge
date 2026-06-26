@@ -7,7 +7,11 @@ from typing import Optional
 import yt_dlp
 
 
-def download_from_url(url: str, output_dir: Optional[str] = None) -> str:
+def download_from_url(url: str, output_dir: Optional[str] = None) -> tuple[str, dict]:
+    """Download video from URL and return (file_path, metadata).
+
+    Metadata includes: title, thumbnail, duration, uploader, etc.
+    """
     if output_dir is None:
         output_dir = tempfile.mkdtemp()
 
@@ -30,7 +34,13 @@ def download_from_url(url: str, output_dir: Optional[str] = None) -> str:
         ext = info.get("ext", "mp4")
         path = Path(output_dir) / f"{info['id']}.{ext}"
 
-    return str(path.resolve())
+    return str(path.resolve()), {
+        "title": info.get("title", ""),
+        "thumbnail": info.get("thumbnail", ""),
+        "duration": info.get("duration", 0),
+        "uploader": info.get("uploader", ""),
+        "webpage_url": info.get("webpage_url", url),
+    }
 
 
 def get_media_duration(file_path: str, default: float = 0.0) -> float:

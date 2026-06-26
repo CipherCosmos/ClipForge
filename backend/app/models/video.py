@@ -30,6 +30,7 @@ class Video(Base):
     segments = Column(JSONB, nullable=True)
     language = Column(String(10), nullable=True)
     platform = Column(String(50), nullable=True, default="youtube_shorts")
+    thumbnail_url = Column(String(1024), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User", backref="videos")
