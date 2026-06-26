@@ -15,6 +15,8 @@ from sqlalchemy import and_
 from app.api.ws import broadcast_sync
 from app.config import settings
 from app.models import Clip, Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
+from app.services.branding import BrandConfig, build_watermark_filter
+from app.services.branding import BrandConfig, generate_title_card
 from app.services.ducking import build_duck_filter
 from app.services.moderation import moderate_segment
 from app.services.platforms import get_preset
@@ -556,6 +558,7 @@ def _render_clip(
     caption: str = "",
     preset: object | None = None,
     hook_text: str = "",
+    watermark_filters: list[str] | None = None,
 ) -> None:
     if preset is None:
         from app.services.platforms import PlatformPreset
@@ -607,6 +610,9 @@ def _render_clip(
             filters.insert(-1, hook_filter)
         else:
             filters.append(hook_filter)
+
+    if watermark_filters:
+        filters.extend(watermark_filters)
 
     vf_str = ",".join(filters)
 
@@ -759,8 +765,12 @@ def _get_media_duration(file_path: str) -> float:
         return 0.0
 
 
-def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 1920) -> str:
+def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 1920, brand: BrandConfig | None = None) -> str:
     """Create a 2-second title card with centered text on black background."""
+    if brand:
+        result = generate_title_card(text, output_path, brand, pw, ph)
+        if result:
+            return result
     if not _has_drawtext():
         pure_black = [
             "ffmpeg", "-y",
@@ -774,13 +784,14 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
     safe_text = text.strip()[:50]
     for ch in (":", "'", "%", "[", "]", "{", "}", "\\"):
         safe_text = safe_text.replace(ch, f"\\{ch}")
+    brand_color = brand.primary_color if brand else "white"
     label = f"Best of: {safe_text}"[:50]
     cmd = [
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
         "-vf",
         f"drawtext=text='{label}':"
-        f"fontsize=48:fontcolor=white:"
+        f"fontsize=48:fontcolor={brand_color}:"
         f"x=(w-text_w)/2:y=(h-text_h)/2:"
         f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "-c:v", "libx264", "-preset", "medium", "-crf", "23",
@@ -836,6 +847,7 @@ def _render_compilation(
     segments: list[dict],
     video_id: str,
     preset: object | None = None,
+    brand: BrandConfig | None = None,
 ) -> str | None:
     """Stitch already-rendered clips into a 'best of' compilation with title/end cards.
 
@@ -867,7 +879,7 @@ def _render_compilation(
     try:
         first_text = segments[0].get("text", "")[:50] if segments else "Highlights"
         title_path = os.path.join(tmp_dir, "title.mp4")
-        _create_title_card(first_text, title_path, pw, ph)
+        _create_title_card(first_text, title_path, pw, ph, brand)
 
         end_path = os.path.join(tmp_dir, "end.mp4")
         _create_end_card(end_path, pw, ph)
@@ -924,13 +936,13 @@ def _render_compilation(
 
 def _render_clip_parallel(args: tuple) -> dict | None:
     """Render a single clip (runs in thread pool)."""
-    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata = args
+    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata, watermark_filters = args
 
     clip_filename = f"clip_{clip_idx:04d}.mp4"
     clip_dir = os.path.dirname(input_path)
     clip_path = os.path.join(clip_dir, clip_filename)
 
-    _render_clip(input_path, clip_path, start, end, caption, preset, hook_text)
+    _render_clip(input_path, clip_path, start, end, caption, preset, hook_text, watermark_filters)
 
     moderation = moderate_segment(input_path, caption, start + 1.0)
     if not moderation["passed"]:
@@ -987,7 +999,19 @@ def run_render(self, video_id: str):
         if not video:
             raise ValueError(f"Video {video_id} not found")
 
+        # Check user plan for watermark and resolution limits
+        user = session.query(User).filter(User.id == video.user_id).first()
+        needs_watermark = user and user.plan != "pro"
+
         preset = get_preset(video.platform or "youtube_shorts")
+
+        # Resolution limit for free users
+        if user and user.plan != "pro":
+            if preset.width > 720 and preset.height > 720:
+                scale_factor = 720 / max(preset.width, preset.height)
+                preset.width = int(preset.width * scale_factor)
+                preset.height = int(preset.height * scale_factor)
+                preset.video_bitrate = "2M"
 
         # ── Smart Resume: skip if clips already exist (previous run completed) ──
         from app.models.clip import Clip
@@ -1046,11 +1070,18 @@ def run_render(self, video_id: str):
             logger.info("Downloading video %s for rendering", video_id)
             download_file(video.source_url, input_video_path)
 
+            # Build watermark filters for free users
+            watermark_filters: list[str] | None = None
+            if needs_watermark:
+                brand = BrandConfig(watermark_text="@ClipForge")
+                watermark_filters = build_watermark_filter(brand, 1080, 1920)
+
             total = len(top_segments)
             render_args = [
                 (input_video_path, seg["start"], seg["end"],
                  seg.get("text", ""), video_id, idx, preset,
-                 pre_generated_data[idx][0], pre_generated_data[idx][1])
+                 pre_generated_data[idx][0], pre_generated_data[idx][1],
+                 watermark_filters)
                 for idx, seg in enumerate(top_segments)
             ]
 
@@ -1113,7 +1144,8 @@ def run_render(self, video_id: str):
                     {"start": r["start"], "end": r["end"], "text": r.get("caption", "")}
                     for r in results[:5]
                 ]
-                comp_url = _render_compilation(comp_clip_paths, comp_segments, video_id, preset)
+                brand = BrandConfig()
+                comp_url = _render_compilation(comp_clip_paths, comp_segments, video_id, preset, brand)
                 if comp_url:
                     logger.info(
                         "Compilation URL for video %s: %s", video_id, comp_url

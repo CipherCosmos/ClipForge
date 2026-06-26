@@ -136,6 +136,51 @@ async def import_video(
     return _video_to_response(video)
 
 
+@router.post("/import-batch", status_code=status.HTTP_201_CREATED)
+async def import_batch_videos(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    urls = payload.get("urls", [])
+    platform = payload.get("platform", "youtube_shorts")
+
+    if not urls:
+        raise HTTPException(status_code=400, detail="No URLs provided")
+
+    if len(urls) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 URLs per batch")
+
+    preset = get_preset(platform)
+    created = []
+
+    for url in urls:
+        _validate_url(url)
+
+        video = Video(
+            user_id=current_user.id,
+            source_url=url,
+            status=VideoStatusEnum.UPLOADED,
+            duration=None,
+            title="Importing from YouTube...",
+            platform=preset.name,
+        )
+        db.add(video)
+        await db.flush()
+
+        job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
+        job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
+        job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
+        db.add_all([job1, job2, job3])
+
+        from app.workers.transcription import run_transcription
+        run_transcription.delay(str(video.id))
+
+        created.append({"id": str(video.id), "url": url})
+
+    await db.commit()
+    return {"videos": created, "count": len(created)}
+
 @router.get("/platforms")
 async def list_platform_presets():
     return list_presets()

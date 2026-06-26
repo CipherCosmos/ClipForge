@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 
 from app.api.auth import router as auth_router
+from app.api.keys import router as keys_router
 from app.core.ratelimit import limiter
 from app.api.clips import router as clips_router
 from app.api.jobs import router as jobs_router
@@ -13,6 +14,8 @@ from app.api.videos import router as videos_router
 from app.api.exports import router as exports_router
 from app.api.ws import router as ws_router
 from app.api.research import router as research_router
+from app.api.publish import router as publish_router
+from app.api.branding import router as branding_router
 from app.config import settings
 from app.database import Base, engine
 from app.services.storage import ensure_bucket
@@ -46,12 +49,15 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(keys_router)
 app.include_router(videos_router)
 app.include_router(clips_router)
 app.include_router(jobs_router)
 app.include_router(ws_router)
 app.include_router(research_router)
 app.include_router(exports_router)
+app.include_router(branding_router)
+app.include_router(publish_router)
 
 
 @app.get("/health")

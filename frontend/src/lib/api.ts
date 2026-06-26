@@ -18,6 +18,8 @@ export const authAPI = {
   register: (email: string, password: string) => api.post("/auth/register", { email, password }),
   login: (email: string, password: string) => api.post("/auth/login", { email, password }),
   me: () => api.get("/auth/me"),
+  generateApiKey: () => api.post("/keys/generate"),
+  revokeApiKey: () => api.delete("/keys/revoke"),
 }
 
 export const videosAPI = {
@@ -29,6 +31,8 @@ export const videosAPI = {
     return api.post(`/videos?platform=${platform}`, form, { headers: { "Content-Type": "multipart/form-data" } })
   },
   importFromUrl: (source_url: string, platform = "youtube_shorts") => api.post("/videos/import", { source_url, platform }),
+  importBatch: (urls: string[], platform?: string) =>
+    api.post("/videos/import-batch", { urls, platform }),
   delete: (id: string) => api.delete(`/videos/${id}`),
   platforms: () => api.get("/videos/platforms"),
   reprocess: (id: string) => api.post(`/videos/${id}/reprocess`),
@@ -38,6 +42,8 @@ export const clipsAPI = {
   list: (video_id: string) => api.get("/clips", { params: { video_id } }),
   get: (id: string) => api.get(`/clips/${id}`),
   dub: (clipId: string, target_lang: string) => api.post(`/clips/${clipId}/dub`, { target_lang }),
+  publish: (clipId: string, platform: string, accessToken: string, title?: string, description?: string, hashtags?: string) =>
+    api.post(`/publish/clip`, { clip_id: clipId, platform, access_token: accessToken, title, description, hashtags }),
 }
 
 export const jobsAPI = {

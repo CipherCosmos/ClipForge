@@ -20,4 +20,5 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     plan = Column(Enum(PlanEnum), default=PlanEnum.FREE, nullable=False)
+    api_key_hash = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

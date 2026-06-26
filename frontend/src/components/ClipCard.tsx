@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useState, useRef, useEffect } from "react"
-import { Download, Copy, Check, Clock, TrendingUp, Hash, Film } from "lucide-react"
+import { Download, Copy, Check, Clock, TrendingUp, Hash, Film, Globe, Loader2 } from "lucide-react"
 import { formatDuration, cn } from "@/lib/utils"
 import { clipsAPI } from "@/lib/api"
 
@@ -41,6 +41,9 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
   const [selectedLang, setSelectedLang] = useState<string>("original")
   const [dubbing, setDubbing] = useState<boolean>(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [publishing, setPublishing] = useState<string | null>(null)
+  const [publishError, setPublishError] = useState("")
+  const [publishSuccess, setPublishSuccess] = useState(false)
 
   const [copiedDesc, setCopiedDesc] = useState(false)
   const [copiedTags, setCopiedTags] = useState(false)
@@ -80,6 +83,28 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
   const videoSrc = selectedLang !== "original" && localClip.dubs?.[selectedLang]
     ? localClip.dubs[selectedLang]
     : clip.file_url
+
+  const handlePublish = async (platform: string) => {
+    setPublishing(platform)
+    setPublishError("")
+    setPublishSuccess(false)
+    try {
+      const token = prompt(`Enter your ${platform} access token:`)
+      if (!token) { setPublishing(null); return }
+
+      const res = await clipsAPI.publish(clip.id, platform, token)
+      if (res.data.success) {
+        setPublishSuccess(true)
+        setTimeout(() => setPublishSuccess(false), 5000)
+      } else {
+        setPublishError(res.data.error || "Publish failed")
+      }
+    } catch (err: any) {
+      setPublishError(err.response?.data?.detail || err.message || "Publish failed")
+    } finally {
+      setPublishing(null)
+    }
+  }
 
   const handleDownload = async () => {
     showToast("Starting clip download...")
@@ -278,6 +303,39 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
                 )
               })}
             </div>
+          </div>
+        )}
+
+        {/* Publish section */}
+        {clip.file_url && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Globe size={14} className="text-slate-400" />
+              <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Publish To</span>
+            </div>
+            <div className="flex gap-2">
+              {["youtube_shorts", "tiktok", "instagram_reels"].map((platform) => (
+                <button
+                  key={platform}
+                  onClick={() => handlePublish(platform)}
+                  disabled={publishing === platform}
+                  className="flex-1 btn-slate py-1.5 text-xs flex items-center justify-center gap-1.5"
+                >
+                  {publishing === platform ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    platform === "youtube_shorts" ? "YouTube" :
+                    platform === "tiktok" ? "TikTok" : "Instagram"
+                  )}
+                </button>
+              ))}
+            </div>
+            {publishError && (
+              <p className="text-xs text-red-400 mt-1">{publishError}</p>
+            )}
+            {publishSuccess && (
+              <p className="text-xs text-emerald-400 mt-1">Published successfully!</p>
+            )}
           </div>
         )}
 
