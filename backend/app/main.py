@@ -16,6 +16,7 @@ from app.api.ws import router as ws_router
 from app.api.research import router as research_router
 from app.api.publish import router as publish_router
 from app.api.branding import router as branding_router
+from app.api.settings import router as settings_router
 from app.config import settings
 from app.database import Base, engine
 from app.services.storage import ensure_bucket
@@ -57,6 +58,7 @@ app.include_router(jobs_router)
 app.include_router(ws_router)
 app.include_router(research_router)
 app.include_router(branding_router)
+app.include_router(settings_router)
 app.include_router(publish_router)
 
 

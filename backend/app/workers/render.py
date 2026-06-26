@@ -1003,6 +1003,15 @@ def run_render(self, video_id: str):
         user = session.query(User).filter(User.id == video.user_id).first()
         needs_watermark = user and user.plan != "pro"
 
+        # Load user preferences for branding
+        prefs = user.preferences or {} if hasattr(user, 'preferences') else {}
+        user_brand = BrandConfig(
+            watermark_text=prefs.get("watermark_text", ""),
+            primary_color=prefs.get("primary_color", "#FF6B35"),
+        )
+        caption_style = prefs.get("caption_style", "classic")
+        music_track = prefs.get("music_track", "")
+
         preset = get_preset(video.platform or "youtube_shorts")
 
         # Resolution limit for free users
@@ -1073,8 +1082,7 @@ def run_render(self, video_id: str):
             # Build watermark filters for free users
             watermark_filters: list[str] | None = None
             if needs_watermark:
-                brand = BrandConfig(watermark_text="@ClipForge")
-                watermark_filters = build_watermark_filter(brand, 1080, 1920)
+                watermark_filters = build_watermark_filter(user_brand, 1080, 1920)
 
             total = len(top_segments)
             render_args = [
@@ -1144,8 +1152,7 @@ def run_render(self, video_id: str):
                     {"start": r["start"], "end": r["end"], "text": r.get("caption", "")}
                     for r in results[:5]
                 ]
-                brand = BrandConfig()
-                comp_url = _render_compilation(comp_clip_paths, comp_segments, video_id, preset, brand)
+                comp_url = _render_compilation(comp_clip_paths, comp_segments, video_id, preset, user_brand)
                 if comp_url:
                     logger.info(
                         "Compilation URL for video %s: %s", video_id, comp_url

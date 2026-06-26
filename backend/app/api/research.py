@@ -31,10 +31,13 @@ class CrawlRequest(BaseModel):
 @router.get("/trends")
 async def get_trends(
     source: str = "google",
-    geo: str = "US",
+    geo: str | None = None,
     current_user: User = Depends(get_current_user)
 ):
     """Get trending topics/articles/videos from various feeds (google, youtube, reddit, news)."""
+    prefs = current_user.preferences or {}
+    if geo is None:
+        geo = prefs.get("research_location", "US")
     source_lower = source.lower() if source else "google"
     geo_upper = geo.upper() if geo else "US"
     if geo_upper not in SUPPORTED_GEOS:

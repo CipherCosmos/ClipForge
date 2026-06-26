@@ -22,6 +22,8 @@ export const authAPI = {
   generateApiKey: (name?: string, expireDays?: number | null) =>
     api.post("/keys/generate", { name: name || "Default", expire_days: expireDays || null }),
   revokeApiKey: (keyId: string) => api.delete(`/keys/${keyId}`),
+  getSettings: () => api.get("/settings"),
+  updateSettings: (prefs: Record<string, any>) => api.put("/settings", prefs),
 }
 
 export const videosAPI = {

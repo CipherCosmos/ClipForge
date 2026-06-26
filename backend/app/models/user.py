@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, String
+from sqlalchemy import Column, DateTime, Enum, JSON, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -20,4 +20,5 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     plan = Column(Enum(PlanEnum), default=PlanEnum.FREE, nullable=False)
+    preferences = Column(JSON, nullable=True, default=lambda: {})
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
