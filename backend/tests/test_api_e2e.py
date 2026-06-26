@@ -171,6 +171,16 @@ class TestVideosE2E:
         assert r.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_export_endpoint(self):
+        app.dependency_overrides[get_current_user] = lambda: SAMPLE_USER
+        app.dependency_overrides[get_db] = lambda: MockAsyncSession()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.get("/api/videos/00000000-0000-0000-0000-000000000000/export")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_delete_video_requires_auth(self):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -205,6 +215,16 @@ class TestJobsE2E:
                 "/api/jobs?video_id=00000000-0000-0000-0000-000000000001"
             )
         assert r.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_job_retry_endpoint(self):
+        app.dependency_overrides[get_current_user] = lambda: SAMPLE_USER
+        app.dependency_overrides[get_db] = lambda: MockAsyncSession()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            resp = await ac.post("/api/jobs/00000000-0000-0000-0000-000000000000/retry")
+        assert resp.status_code == 404
 
 
 class TestSchemaValidation:

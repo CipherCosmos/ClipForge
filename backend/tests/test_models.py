@@ -62,6 +62,27 @@ def test_job_creation():
             assert job.progress == 0.5
 
 
+def test_user_api_key_hash():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine("sqlite:///:memory:")
+    User.__table__.create(bind=engine)
+    test_session = sessionmaker(bind=engine)
+    db = test_session()
+    user = User(
+        email="apikey@test.com",
+        password_hash="hash",
+        plan=PlanEnum.FREE,
+        api_key_hash="abc123",
+    )
+    db.add(user)
+    db.commit()
+    fetched = db.query(User).filter(User.email == "apikey@test.com").first()
+    assert fetched.api_key_hash == "abc123"
+    db.close()
+
+
 def test_video_creation():
     video = Video(
         id=uuid.uuid4(),

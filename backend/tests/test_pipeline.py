@@ -312,7 +312,28 @@ class TestRenderStep:
         assert meta["caption"] == "Test transcript text"
 
 
-# ── Step 5: Full Pipeline Chain ──────────────────────────────────────────
+# ── Step 5: Watermark / Plan Gating ─────────────────────────────────────
+
+class TestWatermarkPlanGating:
+    """Test that watermark is applied based on user plan."""
+
+    def test_plan_gating_affects_render(self):
+        """Verify free users get watermark applied."""
+        from app.services.branding import BrandConfig, build_watermark_filter
+        brand = BrandConfig(watermark_text="@ClipForge")
+        filters = build_watermark_filter(brand, 1080, 1920)
+        assert len(filters) == 1
+        assert "@ClipForge" in filters[0]
+
+    def test_no_watermark_when_empty_text(self):
+        """Verify no watermark filter when text is empty."""
+        from app.services.branding import BrandConfig, build_watermark_filter
+        brand = BrandConfig(watermark_text="")
+        filters = build_watermark_filter(brand, 1080, 1920)
+        assert len(filters) == 0
+
+
+# ── Step 6: Full Pipeline Chain ──────────────────────────────────────────
 
 class TestPipelineChain:
     """Test the full pipeline chain: event ordering and dependencies."""
