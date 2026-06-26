@@ -8,6 +8,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -205,6 +206,48 @@ class TestClipsE2E:
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get(f"/api/clips/{uuid.uuid4()}")
         assert r.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_get_clip_success(self):
+        app.dependency_overrides[get_current_user] = lambda: SAMPLE_USER
+
+        class MockSession:
+            async def execute(self, stmt):
+                from tests.test_api_e2e import MockResult
+                clip = MagicMock()
+                clip.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
+                clip.video_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+                clip.start_time = 10.0
+                clip.end_time = 20.0
+                clip.score = 0.95
+                clip.file_url = "clips/vid_id/clip_id.mp4"
+                clip.thumbnail_url = "clips/vid_id/thumb.jpg"
+                clip.title = "Test Clip"
+                clip.hashtags = "#test"
+                clip.caption = "Test Caption"
+                clip.dubs = {}
+                clip.created_at = datetime.now(timezone.utc)
+
+                video = MagicMock()
+                video.id = uuid.UUID("00000000-0000-0000-0000-000000000002")
+                video.user_id = SAMPLE_USER.id
+
+                mock_result = MagicMock()
+                mock_result.scalar_one_or_none.side_effect = [clip, video]
+                return mock_result
+
+        app.dependency_overrides[get_db] = lambda: MockSession()
+
+        transport = ASGITransport(app=app)
+        with patch("app.api.clips.list_files", return_value=["dubs/00000000-0000-0000-0000-000000000002/00000000-0000-0000-0000-000000000001_es.mp4"]), \
+             patch("app.api.clips.get_presigned_url", return_value="http://minio/signed_url.mp4"):
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                resp = await ac.get(f"/api/clips/00000000-0000-0000-0000-000000000001")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["title"] == "Test Clip"
+        assert data["dubs"]["es"] == "http://minio/signed_url.mp4"
 
 
 class TestJobsE2E:

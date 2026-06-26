@@ -35,6 +35,38 @@ _PROFILE_CASCADE = cv2.CascadeClassifier(
 )
 
 _DRAWTEXT_AVAILABLE: bool | None = None
+_FONT_PATH: str | None = None
+
+
+def _get_font_path() -> str:
+    global _FONT_PATH
+    if _FONT_PATH is not None:
+        return _FONT_PATH
+    """Find the DejaVu Sans or Arial font path for the current OS."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+        os.path.expanduser("~/Library/Fonts/DejaVuSans.ttf"),  # macOS (homebrew)
+        "/Library/Fonts/DejaVuSans.ttf",  # macOS (system)
+        "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",  # macOS (supplemental)
+        "/System/Library/Fonts/Supplemental/Arial.ttf",  # macOS (supplemental Arial)
+        "/opt/homebrew/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # macOS (brew)
+        "C:\\Windows\\Fonts\\Arial.ttf",  # Windows
+        "C:\\Windows\\Fonts\\DejaVuSans.ttf",  # Windows
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            _FONT_PATH = path
+            return path
+    _FONT_PATH = ""
+    return ""
+
+
+def _fontfile_arg() -> str:
+    """Return ':fontfile=<path>' if a font is found, else empty string."""
+    path = _get_font_path()
+    return f":fontfile='{path}'" if path else ""
+
+
 def _has_drawtext() -> bool:
     global _DRAWTEXT_AVAILABLE
     if _DRAWTEXT_AVAILABLE is not None:
@@ -381,15 +413,15 @@ def _build_hook_overlay_filter(hook_text: str, duration: float) -> str | None:
     if not hook_text or duration < 3:
         return None
     text = hook_text.strip()[:80]
-    for ch in (":", "'", "%", "[", "]", "{", "}"):
+    for ch in (":", "'", ",", "%", "[", "]", "{", "}"):
         text = text.replace(ch, f"\\{ch}")
     return (
         f"drawtext=text='{text}':"
         f"fontsize=52:fontcolor=white:borderw=2:bordercolor=black:"
         f"x=(w-text_w)/2:y=h/3:"
         f"alpha='if(lt(t,0.5),t/0.5,if(gt(t,3),(4-t)/1,1))':"
-        f"enable='between(t,0,3)':"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        f"enable='between(t,0,3)'"
+        f"{_fontfile_arg()}"
     )
 
 
@@ -646,6 +678,12 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
         data = generate_llm(prompt, format_json=True, timeout=60.0)
         response_text = data.get("response", "[]")
         results = json.loads(response_text)
+        if isinstance(results, dict):
+            # If the LLM wrapped the array in an object (e.g. {"clips": [...]})
+            for val in results.values():
+                if isinstance(val, list):
+                    results = val
+                    break
         if not isinstance(results, list):
             results = [results]
     except Exception as exc:
@@ -712,8 +750,8 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
         "-vf",
         f"drawtext=text='{label}':"
         f"fontsize=48:fontcolor={brand_color}:"
-        f"x=(w-text_w)/2:y=(h-text_h)/2:"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        f"x=(w-text_w)/2:y=(h-text_h)/2"
+        f"{_fontfile_arg()}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "23",
         "-pix_fmt", "yuv420p",
         output_path,
@@ -732,10 +770,10 @@ def _create_end_card(output_path: str, pw: int = 1080, ph: int = 1920) -> str:
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
         "-vf",
-        "drawtext=text='Subscribe for more':"
-        "fontsize=52:fontcolor=white:"
-        "x=(w-text_w)/2:y=(h-text_h)/2:"
-        "fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        f"drawtext=text='Subscribe for more':"
+        f"fontsize=52:fontcolor=white:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2"
+        f"{_fontfile_arg()}",
         "-c:v", "libx264", "-preset", "medium", "-crf", "23",
         "-pix_fmt", "yuv420p",
         output_path,
@@ -1132,6 +1170,8 @@ def run_render(self, video_id: str):
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

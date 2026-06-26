@@ -95,7 +95,10 @@ def main():
     with patch("app.workers.transcription.transcribe_audio") as mock_transcribe, \
             patch("app.workers.transcription.download_file"), \
             patch("app.workers.transcription.SyncSessionLocal") as mock_session_cls, \
-            patch("app.workers.nlp.run_nlp") as mock_nlp:
+            patch("app.workers.nlp.run_nlp") as mock_nlp, \
+            patch("app.services.video.download_from_url", return_value="mock_video.mp4"), \
+            patch("app.services.video.get_video_duration", return_value=12.5), \
+            patch("app.services.storage.upload_file"):
 
         session = MagicMock()
         mock_session_cls.return_value = session
@@ -109,7 +112,7 @@ def main():
         video.status = None
 
         session.query.return_value.filter.return_value.first.side_effect = [
-            video, None
+            video, None, None
         ]
 
         mock_transcribe.return_value = {
@@ -156,8 +159,9 @@ def main():
         },
     ]
 
-    with patch("app.workers.nlp._call_ollama") as mock_ollama, \
+    with patch("app.workers.nlp._call_llm") as mock_llm, \
             patch("app.workers.nlp.SyncSessionLocal") as mock_session_cls, \
+            patch("app.workers.join_worker.check_and_merge") as mock_merge, \
             patch("app.workers.scene_detect.run_scene_detect") as mock_sd:
 
         session = MagicMock()
@@ -170,7 +174,7 @@ def main():
             video, None
         ]
 
-        mock_ollama.return_value = {
+        mock_llm.return_value = {
             "hook_score": 0.85, "emotion_intensity": 0.75,
             "engagement_potential": 0.80, "keyword_density": 0.60,
         }
@@ -194,7 +198,8 @@ def main():
     logger.info("Step 3: Scene Detection & Audio Analysis")
     logger.info(f"{'='*60}")
 
-    from app.workers.scene_detect import _assign_scene_intensity, _calculate_viral_score
+    from app.workers.scene_detect import _assign_scene_intensity
+    from app.services.scoring import calculate_viral_score as _calculate_viral_score
 
     test_segments = [
         {"start": 0.0, "end": 5.0, "scene_change_intensity": 0.0},
@@ -246,18 +251,14 @@ def main():
 
     logger.info(f"  Top clip score: {top[0]['viral_score']}")
 
-    with patch("app.workers.render.httpx.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value.__enter__.return_value = mock_client
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+    with patch("app.services.llm.generate_llm") as mock_generate:
+        mock_generate.return_value = {
             "response": json.dumps({
                 "title": "Amazing Discovery!",
                 "caption": "Watch this incredible breakthrough! #viral",
                 "hashtags": "#science,#viral,#discovery",
             })
         }
-        mock_client.post.return_value = mock_response
 
         meta = _generate_clip_metadata("Amazing discovery in science")
         test_step("Clip metadata generated", lambda: meta["title"] == "Amazing Discovery!")

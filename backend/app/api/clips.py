@@ -32,16 +32,18 @@ def _clip_to_response(clip: Clip, dubs_map: dict[str, list[str]] | None = None) 
         dub_files = dubs_map.get(str(clip.id), [])
     else:
         try:
-            dub_files = list_files(f"dubs/{clip.video_id}/{clip.id}/")
+            all_files = list_files(f"dubs/{clip.video_id}/")
+            dub_files = [f for f in all_files if f.split("/")[-1].startswith(f"{clip.id}_")]
         except Exception:
             dub_files = []
 
     if dub_files:
         dubs_dict = {}
         for df in dub_files:
-            parts = df.split("/")
-            if len(parts) >= 4:
-                lang = parts[-2]
+            filename = df.split("/")[-1]
+            base_name = filename.rsplit(".", 1)[0]
+            if "_" in base_name:
+                lang = base_name.split("_")[-1]
                 dubs_dict[lang] = get_presigned_url(df)
         resp.dubs = dubs_dict
     else:

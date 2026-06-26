@@ -232,6 +232,9 @@ def run_nlp(self, video_id: str):
                 session.execute(update(Job).where(Job.id == job.id).values(progress=capped))
                 session.commit()
 
+        video.segments = segments
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(video, "segments")
         session.commit()
         logger.info("NLP scoring complete for video %s", video_id)
         broadcast_sync(video_id, "nlp", 1.0, "completed", f"Scored {total} segments")
@@ -269,6 +272,8 @@ def run_nlp(self, video_id: str):
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

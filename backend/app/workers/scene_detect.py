@@ -246,6 +246,9 @@ def run_scene_detect(self, video_id: str):
                     ws_progress = 0.5 + (0.5 * job_progress)
                     broadcast_sync(video_id, "scene_detect", ws_progress, "running", f"Analyzed {idx + 1}/{total} segments")
 
+        video.segments = segments
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(video, "segments")
         session.commit()
 
         logger.info("Scene detection + audio analysis complete for video %s", video_id)
@@ -277,7 +280,9 @@ def run_scene_detect(self, video_id: str):
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()
         if audio_path and os.path.exists(audio_path):

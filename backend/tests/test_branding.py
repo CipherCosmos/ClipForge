@@ -1,5 +1,13 @@
 """Tests for branding service."""
+from unittest.mock import patch
+import pytest
 from app.services.branding import BrandConfig, build_caption_style_filter, build_watermark_filter
+
+
+@pytest.fixture(autouse=True)
+def mock_has_drawtext():
+    with patch("app.services.branding.has_drawtext", return_value=True):
+        yield
 
 
 def test_build_watermark_filter_with_text():

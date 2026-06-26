@@ -183,7 +183,9 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
 
     except Exception as exc:
         logger.exception("Dub clip failed for %s", clip_id)
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()
         if tmp_dir and os.path.exists(tmp_dir):
@@ -229,6 +231,8 @@ def run_dub_video(self, video_id: str, target_langs: list[str] | None = None):
 
     except Exception as exc:
         logger.exception("Dub video failed for %s", video_id)
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

@@ -317,7 +317,8 @@ class TestRenderStep:
 class TestWatermarkPlanGating:
     """Test that watermark is applied based on user plan."""
 
-    def test_plan_gating_affects_render(self):
+    @patch("app.services.branding.has_drawtext", return_value=True)
+    def test_plan_gating_affects_render(self, mock_has_drawtext):
         """Verify free users get watermark applied."""
         from app.services.branding import BrandConfig, build_watermark_filter
         brand = BrandConfig(watermark_text="@ClipForge")
@@ -325,7 +326,8 @@ class TestWatermarkPlanGating:
         assert len(filters) == 1
         assert "@ClipForge" in filters[0]
 
-    def test_no_watermark_when_empty_text(self):
+    @patch("app.services.branding.has_drawtext", return_value=True)
+    def test_no_watermark_when_empty_text(self, mock_has_drawtext):
         """Verify no watermark filter when text is empty."""
         from app.services.branding import BrandConfig, build_watermark_filter
         brand = BrandConfig(watermark_text="")

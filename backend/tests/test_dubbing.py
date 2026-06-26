@@ -3,12 +3,18 @@ import sys
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 class TestTranslation:
     """Test the translation service."""
+
+    @pytest.fixture(autouse=True)
+    def mock_llm_translation(self):
+        with patch("app.services.translation._translate_via_llm", return_value=None):
+            yield
 
     def test_supported_languages_defined(self):
         from app.services.translation import SUPPORTED_LANGUAGES

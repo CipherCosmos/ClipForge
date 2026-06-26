@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+import json
 from typing import Any, Dict, Optional
 
 import httpx
@@ -12,8 +14,32 @@ _http_client: httpx.Client | None = None
 def _get_http():
     global _http_client
     if _http_client is None:
-        _http_client = httpx.Client(timeout=30.0)
+        _http_client = httpx.Client(timeout=180.0)
     return _http_client
+
+
+def extract_json_from_text(text: str) -> str:
+    """Extract and return the JSON substring from a text response."""
+    text = text.strip()
+    # Match markdown code block ```json ... ``` or ``` ... ```
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if match:
+        return match.group(1).strip()
+    
+    # Try to find the outer-most curly braces or square brackets
+    start_curly = text.find("{")
+    start_bracket = text.find("[")
+    
+    if start_curly != -1 and (start_bracket == -1 or start_curly < start_bracket):
+        end_curly = text.rfind("}")
+        if end_curly != -1:
+            return text[start_curly:end_curly+1]
+    elif start_bracket != -1:
+        end_bracket = text.rfind("]")
+        if end_bracket != -1:
+            return text[start_bracket:end_bracket+1]
+            
+    return text
 
 
 def generate_llm(
@@ -49,6 +75,8 @@ def generate_llm(
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
+            if format_json:
+                content = extract_json_from_text(content)
             return {"response": content}
         except Exception as e:
             logger.error("Failed to generate via Groq API: %s. Falling back to local Ollama.", e)
@@ -61,8 +89,9 @@ def generate_llm(
         "prompt": prompt,
         "stream": False,
     }
-    if format_json:
-        payload["format"] = "json"
+    # Note: We omit payload["format"] = "json" because Ollama's format constraints 
+    # fail with thinking models (like Qwen 3.5 thinking models).
+    # Instead, we request JSON in prompt and parse/extract it via extract_json_from_text.
     if system_prompt:
         payload["system"] = system_prompt
 
@@ -71,7 +100,10 @@ def generate_llm(
         resp = client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        return {"response": data.get("response", "")}
+        content = data.get("response", "")
+        if format_json:
+            content = extract_json_from_text(content)
+        return {"response": content}
     except Exception as e:
         logger.error("Local Ollama generation failed: %s", e)
         raise e

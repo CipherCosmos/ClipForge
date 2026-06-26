@@ -97,6 +97,25 @@ def _get_argos_model(lang_pair: str):
     return None
 
 
+def _translate_via_llm(text: str, target_lang: str, source_lang: str) -> str | None:
+    """Translate text using LLM (Groq or local Ollama)."""
+    try:
+        from app.services.llm import generate_llm
+        source_name = SUPPORTED_LANGUAGES.get(source_lang, source_lang)
+        target_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
+        prompt = (
+            f"Translate the following text from {source_name} to {target_name}. "
+            f"Return ONLY the translation, with no explanation, intro, or formatting:\n\n{text}"
+        )
+        res = generate_llm(prompt, timeout=15.0)
+        translated = res.get("response", "").strip()
+        if translated:
+            return translated
+    except Exception as exc:
+        logger.warning("LLM translation failed, falling back to Argos: %s", exc)
+    return None
+
+
 def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> str:
     """Translate text from source_lang to target_lang."""
     if source_lang == target_lang:
@@ -104,6 +123,13 @@ def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> s
     if target_lang not in SUPPORTED_LANGUAGES:
         logger.warning("Unsupported target language: %s", target_lang)
         return text
+
+    # Try LLM first (fast, high quality, zero setup)
+    llm_translated = _translate_via_llm(text, target_lang, source_lang)
+    if llm_translated:
+        return llm_translated
+
+    # Fallback to local Argos model
     lang_pair = f"{source_lang}-{target_lang}"
     model = _get_argos_model(lang_pair)
     if model is None:

@@ -234,7 +234,9 @@ def run_transcription(self, video_id: str):
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
