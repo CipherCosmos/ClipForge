@@ -20,25 +20,7 @@ Upload any video (or paste a YouTube URL) → ClipForge automatically transcribe
 
 ## Pipeline Overview
 
-```mermaid
-graph LR
-    A[Upload URL] --> B[Transcribe Whisper]
-    B --> C[Segment ~3s chunks]
-    C --> D1[Viral Scoring LLM]
-    C --> D2[Scene Detect]
-    C --> D3[Audio Analysis]
-    C --> D4[Diarization]
-    D1 --> E[Join Merge]
-    D2 --> E
-    D3 --> E
-    D4 --> E
-    E --> F[Select Top]
-    F --> G[Render FFmpeg]
-    G --> H[Metadata]
-    H --> I[Export]
-    G --> J[Compilation]
-    J --> I
-```
+![Pipeline Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIExSXG4gICAgQVtVcGxvYWQgVVJMXSAtLT4gQltUcmFuc2NyaWJlIFdoaXNwZXJdXG4gICAgQiAtLT4gQ1tTZWdtZW50IH4zcyBjaHVua3NdXG4gICAgQyAtLT4gRDFbVmlyYWwgU2NvcmluZyBMTE1dXG4gICAgQyAtLT4gRDJbU2NlbmUgRGV0ZWN0XVxuICAgIEMgLS0+IEQzW0F1ZGlvIEFuYWx5c2lzXVxuICAgIEMgLS0+IEQ0W1NwZWFrZXIgRGlhcml6YXRpb25dXG4gICAgRDEgLS0+IEVbSm9pbiArIE1lcmdlXVxuICAgIEQyIC0tPiBFXG4gICAgRDMgLS0+IEVcbiAgICBENCAtLT4gRVxuICAgIEUgLS0+IEZbU2VsZWN0IFRvcCBTZWdtZW50c11cbiAgICBGIC0tPiBHW1JlbmRlciBGRm1wZWddXG4gICAgRyAtLT4gSFtHZW5lcmF0ZSBNZXRhZGF0YV1cbiAgICBIIC0tPiBJW0V4cG9ydCBEb3dubG9hZF1cbiAgICBHIC0tPiBKW011bHRpLUNvbXBpbGF0aW9uXVxuICAgIEogLS0+IEkiLCAibWVybWFpZCI6IHsidGhlbWUiOiAiZGVmYXVsdCJ9fQ==)
 
 **End-to-end processing in 2-5 minutes for a 5-minute video.**
 
@@ -46,46 +28,7 @@ graph LR
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Browser
-        NEXT[Next.js Frontend]
-    end
-    subgraph API
-        FA[FastAPI]
-        WS[WebSocket]
-    end
-    subgraph Storage
-        MINIO[MinIO S3]
-        PG[PostgreSQL]
-        RD[Redis]
-    end
-    subgraph Worker
-        T[Transcription]
-        N[NLP Scoring]
-        SD[Scene Detect]
-        J[Join Merge]
-        R[Render]
-    end
-    subgraph Cloud
-        GROQ[Groq API]
-    end
-    NEXT --> FA
-    FA --> MINIO
-    FA --> PG
-    FA --> RD
-    RD --> T
-    T --> N
-    T --> SD
-    N --> J
-    SD --> J
-    J --> R
-    R --> MINIO
-    T -.-> GROQ
-    N -.-> GROQ
-    FA <--> WS
-    WS -.-> NEXT
-```
+![Architecture Diagram](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFRCXG4gICAgc3ViZ3JhcGggRnJvbnRlbmRcbiAgICAgICAgTkVYVFtOZXh0LmpzIEZyb250ZW5kXVxuICAgIGVuZFxuICAgIHN1YmdyYXBoIFNlcnZlclxuICAgICAgICBGQVtGYXN0QVBJXVxuICAgICAgICBXU1tXZWJTb2NrZXRdXG4gICAgZW5kXG4gICAgc3ViZ3JhcGggU3RvcmFnZVxuICAgICAgICBQR1tQb3N0Z3JlU1FMXVxuICAgICAgICBSRFtSZWRpcyBRdWV1ZV1cbiAgICAgICAgTUlbTWluSU8gUzNdXG4gICAgZW5kXG4gICAgc3ViZ3JhcGggV29ya2Vyc1xuICAgICAgICBUW1RyYW5zY3JpcHRpb25dXG4gICAgICAgIE5bTkxQIFNjb3JpbmddXG4gICAgICAgIFNEW1NjZW5lIERldGVjdF1cbiAgICAgICAgSltKb2luIE1lcmdlXVxuICAgICAgICBSW1JlbmRlciBGRm1wZWddXG4gICAgZW5kXG4gICAgc3ViZ3JhcGggQ2xvdWRHUFVcbiAgICAgICAgR1FbR3JvcSBBUEldXG4gICAgZW5kXG4gICAgTkVYVCAtLT4gRkFcbiAgICBGQSAtLT4gUEdcbiAgICBGQSAtLT4gUkRcbiAgICBGQSAtLT4gTUlcbiAgICBSRCAtLT4gVFxuICAgIFQgLS0+IE5cbiAgICBUIC0tPiBTRFxuICAgIE4gLS0+IEpcbiAgICBTRCAtLT4gSlxuICAgIEogLS0+IFJcbiAgICBSIC0tPiBNSVxuICAgIFQgLS4tPiBHUVxuICAgIE4gLS4tPiBHUSIsICJtZXJtYWlkIjogeyJ0aGVtZSI6ICJkZWZhdWx0In19)
 
 ---
 
@@ -109,19 +52,7 @@ graph TB
 
 ### Viral Score Formula
 
-```mermaid
-graph TD
-    H[hook 0.25] --> F
-    E[emotion 0.20] --> F
-    EN[engage 0.15] --> F
-    K[keyword 0.10] --> F
-    SC[scene 0.10] --> F
-    AE[audio ev 0.10] --> F
-    AEG[energy 0.05] --> F
-    SP[speaker 0.05] --> F
-    F[Base Score] --> B[trend boost 1-3x]
-    B --> R[Final Score]
-```
+![Viral Score Formula](https://mermaid.ink/img/eyJjb2RlIjogImdyYXBoIFREXG4gICAgSFtob29rX3Njb3JlIDAuMjVdIC0tPiBGXG4gICAgRVtlbW90aW9uX2ludGVuc2l0eSAwLjIwXSAtLT4gRlxuICAgIEVOW2VuZ2FnZW1lbnRfcG90ZW50aWFsIDAuMTVdIC0tPiBGXG4gICAgS1trZXl3b3JkX2RlbnNpdHkgMC4xMF0gLS0+IEZcbiAgICBTQ1tzY2VuZV9jaGFuZ2VfaW50ZW5zaXR5IDAuMTBdIC0tPiBGXG4gICAgQUVbYXVkaW9fZXZlbnRfc2NvcmUgMC4xMF0gLS0+IEZcbiAgICBBRUdbYXVkaW9fZW5lcmd5IDAuMDVdIC0tPiBGXG4gICAgU1Bbc3BlYWtlcl9jb25maWRlbmNlIDAuMDVdIC0tPiBGXG4gICAgRltCYXNlIFNjb3JlXSAtLT4gQlt0cmVuZF9ib29zdCB4MS0zXVxuICAgIEIgLS0+IFJbRmluYWwgVmlyYWwgU2NvcmVdIiwgIm1lcm1haWQiOiB7InRoZW1lIjogImRlZmF1bHQifX0=)
 
 Then multiplied by `trend_boost` (1-3×) if segment contains trending keywords.
 
