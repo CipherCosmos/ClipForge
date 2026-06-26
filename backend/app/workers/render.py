@@ -27,7 +27,6 @@ MAX_CLIPS = 10
 MIN_CLIP_DURATION = 2.0
 MAX_CLIP_DURATION = 60.0
 
-# Pre-warm Haar cascade once at module level (avoids XML parse per call)
 _FACE_CASCADE = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
