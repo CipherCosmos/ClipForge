@@ -1056,7 +1056,9 @@ def run_render(self, video_id: str):
             ]
 
             # Parallel render
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            from app.services.device import get_optimal_threads
+            render_workers = get_optimal_threads()
+            with ThreadPoolExecutor(max_workers=render_workers) as executor:
                 futures = {
                     executor.submit(_render_clip_parallel, args): args
                     for args in render_args

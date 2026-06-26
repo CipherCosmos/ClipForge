@@ -287,7 +287,8 @@ fi
 echo -n "  Starting Celery worker... "
 cd "$BACKEND"
 source "$VENV/bin/activate"
-nohup "$VENV/bin/celery" -A app.workers.celery_app worker --loglevel=info --pool=threads --concurrency=4 > "$ROOT/celery.log" 2>&1 &
+CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-$(python3 -c "import os; print(max(2, min(8, (os.cpu_count() or 4) // 2)))")}
+nohup "$VENV/bin/celery" -A app.workers.celery_app worker --loglevel=info --pool=threads --concurrency=$CELERY_CONCURRENCY > "$ROOT/celery.log" 2>&1 &
 echo $! >> "$PID_FILE"
 sleep 3
 if pgrep -f "celery.*worker" > /dev/null 2>&1; then
