@@ -1,83 +1,549 @@
 # ClipForge
 
-AI-powered **viral short-form video generation** — upload or paste a URL, auto-transcribe in 99+ languages, score for viral potential, and auto-render the top clips.
+**AI-powered viral short video auto-generation platform.**
 
-## Quick Start
+Upload any video (or paste a YouTube URL) → ClipForge automatically transcribes it in 99+ languages, scores every segment for viral potential, and renders the best clips as platform-optimized shorts for YouTube, TikTok, Instagram Reels, and more.
 
-**Prerequisites:** Docker, Node.js 20+
+**Complete project — ready to run locally in under 2 minutes.**
 
-```bash
-make up          # Start all services
-make seed        # Create test user
-make pull-models # Pull LLM models (first time)
-```
+---
 
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:3000 |
-| API | http://localhost:8000 |
-| MinIO Console | http://localhost:9001 |
-| Ollama | http://localhost:11434 |
-
-## How It Works
-
-1. **Upload or import** a video (file or YouTube/URL)
-2. **Auto-transcribe** in any of 99+ languages via Whisper `large-v3`
-3. **Viral scoring** analyzes every segment across 8 dimensions:
-   - **Hook score** (0.25) — strong openers via Ollama LLM
-   - **Emotion intensity** (0.20) — emotional impact via Ollama + SenseVoice
-   - **Engagement potential** (0.15) — shareability via Ollama LLM
-   - **Keyword density** (0.10) — trending keywords via Ollama LLM
-   - **Scene change intensity** (0.10) — fast-cut energy via PySceneDetect
-   - **Audio event score** (0.10) — laughter/applause/music via SenseVoice
-   - **Audio energy** (0.05) — loudness peaks via FFmpeg
-   - **Speaker confidence** (0.05) — single speaker clarity via diarize
-4. **Auto-render** the top-scoring segments as ready-to-export shorts
-5. **Download or publish** your viral clips — no manual editing needed
-
-## Viral Score
-
-Each segment receives a **unified viral score** (0.0–1.0):
+## Demo
 
 ```
-score = 0.25 * hook_score + 0.20 * emotion_intensity + 0.15 * engagement_potential + 0.10 * keyword_density + 0.10 * scene_change_intensity + 0.10 * audio_event_score + 0.05 * audio_energy + 0.05 * speaker_confidence
+1. Start:  ./scripts/start.sh
+2. Login:  test@clipforge.dev / password123
+3. Paste:  https://www.youtube.com/watch?v=... → ClipForge auto-generates viral shorts
 ```
 
-The system automatically selects the highest-scoring segments for export.
+---
+
+## Pipeline Overview
+
+```
+Upload/URL → Transcribe (Whisper) → Viral Scoring (Groq LLM + SenseVoice)
+  → Scene Detect (PySceneDetect) → Diarization (speaker ID)
+  → Audio Analysis (emotion, energy, events) → Clip Render (FFmpeg)
+  → Metadata Gen (title, caption, hashtags) → Export
+```
+
+**End-to-end processing in 2-5 minutes for a 5-minute video.**
+
+---
 
 ## Architecture
 
-All processing is **free and open-source** — no paid APIs required. Services are split across FastAPI (API gateway, auth, REST), Celery workers (transcription, viral scoring, scene detection, audio/emotion analysis, speaker diarization, clip rendering, exports), MinIO (object storage), PostgreSQL (metadata), Redis (queue broker), and Ollama (local LLM inference). The processing pipeline follows: upload → transcription (Whisper large-v3) → viral scoring (Ollama + HF emotion + SenseVoice) → scene detection (PySceneDetect) → speaker diarization (diarize) → clip rendering (FFmpeg) → export.
-
-## Project Structure
-
 ```
-├── backend/           # FastAPI + Celery workers
-│   ├── app/           # Application code
-│   ├── scripts/       # Utility scripts
-│   └── tests/         # Pytest tests
-├── frontend/          # Next.js + TailwindCSS
-└── docker-compose.yml # All services
+┌──────────────────────────┐     ┌──────────────────┐
+│   Browser (Next.js)      │     │   MinIO Storage   │
+│   localhost:3000         │     │   localhost:9002   │
+└──────────┬───────────────┘     └────────┬─────────┘
+           │ HTTP REST + WebSocket        │ S3 API
+           ▼                              │
+┌──────────────────────────────────────────┴──────────┐
+│              FastAPI (localhost:8000)                 │
+│  ┌────────────────────────────────────────────────┐  │
+│  │  Celery Worker (tasks)                        │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │  │
+│  │  │Transcribe│  │NLP Score │  │Scene Detect  │  │  │
+│  │  │(Whisper) │  │(Groq LLM)│  │(PySceneDetect│  │  │
+│  │  └──────────┘  └──────────┘  │ +SenseVoice) │  │  │
+│  │                              └─────────────┘  │  │
+│  │  ┌──────────────┐  ┌────────────────────┐     │  │
+│  │  │Join + Merge  │  │Render (FFmpeg)     │     │  │
+│  │  │(viral scores)│  │(clips + compilatio)│     │  │
+│  │  └──────────────┘  └────────────────────┘     │  │
+│  └────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────┘
+           │                    │
+           ▼                    ▼
+┌──────────────────┐  ┌──────────────────┐
+│   PostgreSQL     │  │   Redis (queue)   │
+│   localhost:5432  │  │   localhost:6379  │
+└──────────────────┘  └──────────────────┘
 ```
 
-## Development Workflow
+---
 
-1. Add a model → create SQLAlchemy model in `backend/app/models/`
-2. Add an endpoint → create router in `backend/app/api/`
-3. Run tests: `make test-backend`
-4. Lint: `make lint`
-5. Add frontend pages in `frontend/`
+## Features
 
-## Environment Variables
+### Core Pipeline
 
-| Variable | Default | Description |
+| Stage | What It Does | Tech |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://clipforge:clipforge_dev@postgres:5432/clipforge` | PostgreSQL connection |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis connection |
-| `MINIO_ENDPOINT` | `minio:9000` | MinIO server |
-| `MINIO_ACCESS_KEY` | `clipforge` | MinIO access key |
-| `MINIO_SECRET_KEY` | `clipforge_dev` | MinIO secret key |
-| `OLLAMA_URL` | `http://ollama:11434` | Ollama server |
-| `SECRET_KEY` | (random) | JWT signing key |
+| **Import** | Upload file or download from YouTube URL | yt-dlp |
+| **Transcription** | Speech-to-text in 99+ languages | MLX Whisper (MPS) / Groq Whisper API |
+| **Viral Scoring** | 8-dimension scoring — hooks, emotion, engagement, keyword density, scene changes, audio events, energy, speaker confidence | Groq Llama-3.3-70B + SenseVoice + librosa |
+| **Scene Detection** | Hard cuts + fades/dissolves detection | PySceneDetect v0.7 (ContentDetector + AdaptiveDetector) |
+| **Speaker Diarization** | Who spoke when | Silero VAD + energy-based clustering |
+| **Audio Analysis** | Emotion, laughter, applause, music detection | SenseVoice |
+| **Clip Rendering** | Trim, crop, hook overlay, subtitle burn-in, audio ducking | FFmpeg + drawtext |
+| **Auto Thumbnails** | Best frame selection via face detection + sharpness scoring | OpenCV Haar cascade + Tenengrad |
+| **Metadata** | AI-generated title, caption, hashtags | Groq LLM |
+| **Multi-Highlight Compilation** | Best-of compilation with crossfades, title card, call-to-action | FFmpeg xfade |
+| **AI Voice Dubbing** | Translate + TTS to 40+ languages | Argos Translate + Edge TTS |
 
-> **Status:** Phase 1 — Viral Shorts Auto-Generation. Upload/URL → Auto-transcribe (99+ languages, Whisper large-v3) → Viral scoring → Auto-render top clips. Manual export only.
+### Viral Score Formula
+
+```
+score = 0.25 × hook_score
+      + 0.20 × emotion_intensity
+      + 0.15 × engagement_potential
+      + 0.10 × keyword_density
+      + 0.10 × scene_change_intensity
+      + 0.10 × audio_event_score
+      + 0.05 × audio_energy
+      + 0.05 × speaker_confidence
+```
+
+Then multiplied by `trend_boost` (1-3×) if segment contains trending keywords.
+
+### Smart Resume
+
+If processing is interrupted or you click "Force Reprocess", ClipForge detects which stages already have valid data in the database and skips them automatically:
+- **Transcription** — skips if `video.transcript` and `video.segments` exist
+- **NLP Scoring** — skips if >50% of segments have `hook_score > 0`
+- **Scene Detect** — skips if all segments have `scene_change_intensity`
+- **Render** — skips if clips already exist for the video
+
+To truly restart from scratch, delete the video and re-upload.
+
+---
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| **Frontend** | Next.js 14 + TailwindCSS + Redux Toolkit |
+| **Backend** | FastAPI (Python 3.12+) |
+| **Database** | PostgreSQL 16 + pgvector |
+| **Queue** | Celery + Redis |
+| **Storage** | MinIO (S3-compatible) |
+| **ASR** | MLX Whisper (MPS GPU) / Groq Whisper API |
+| **LLM** | Groq Llama-3.3-70B / local Ollama |
+| **Video** | FFmpeg + PySceneDetect + OpenCV |
+| **Auth** | JWT (python-jose + bcrypt) |
+
+### Key Python Dependencies
+
+```
+fastapi, uvicorn           — Web framework
+sqlalchemy, asyncpg        — Database ORM
+celery, redis              — Task queue + broker
+minio                      — S3 storage
+faster-whisper, mlx-whisper — Speech recognition
+funasr, transformers       — Audio emotion + NSFW detection
+librosa, soundfile         — Audio feature extraction
+opencv-python, scenedetect — Computer vision + scene detection
+httpx, yt-dlp              — HTTP client + YouTube download
+python-jose, passlib       — JWT auth + password hashing
+argos-translate            — Machine translation
+edge-tts                   — Text-to-speech
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Docker (with OrbStack or Docker Desktop)
+- Python 3.12+
+- Node.js 18+
+- Apple Silicon Mac recommended (for MLX Whisper GPU acceleration)
+
+### 1. Start infrastructure
+
+```bash
+git clone https://github.com/CipherCosmos/ClipForge.git
+cd ClipForge
+make up
+```
+
+Or manually:
+
+```bash
+docker compose up -d
+```
+
+This starts PostgreSQL (port 5432), Redis (6379), and MinIO (9002/9003).
+
+### 2. Run the setup script
+
+```bash
+./scripts/start.sh
+```
+
+This single command:
+- ✅ Checks prerequisites
+- ✅ Starts Docker containers
+- ✅ Creates MinIO bucket
+- ✅ Sets up Python venv + dependencies
+- ✅ Creates database tables
+- ✅ Seeds test user
+- ✅ Starts API (port 8000), Celery worker, Frontend (port 3000)
+
+### 3. Use the app
+
+| URL | Description |
+|---|---|
+| http://localhost:3000 | Frontend dashboard |
+| http://localhost:8000/docs | API documentation (Swagger) |
+| http://localhost:9003 | MinIO Console (clipforge / clipforge_dev) |
+
+**Login:** `test@clipforge.dev` / `password123`
+
+### 4. Process a video
+
+1. Click **New Project**
+2. Paste a YouTube URL or upload a file
+3. Select your target platform (YouTube Shorts, TikTok, Instagram Reels, etc.)
+4. Click **Import** → the pipeline starts automatically
+5. Watch real-time progress via WebSocket
+6. When complete, download your clips
+
+---
+
+## Configuration
+
+All settings are in `backend/.env`:
+
+```env
+# Database
+DATABASE_URL=postgresql+asyncpg://clipforge:clipforge@localhost:5432/clipforge
+
+# Redis / Queue
+REDIS_URL=redis://localhost:6379/0
+
+# Storage (MinIO)
+MINIO_ENDPOINT=localhost:9002
+MINIO_ACCESS_KEY=clipforge
+MINIO_SECRET_KEY=clipforge_dev
+MINIO_BUCKET=clipforge-media
+
+# Auth
+JWT_SECRET=change-me-in-production
+JWT_EXPIRE_MINUTES=1440
+
+# Transcription
+WHISPER_MODEL_SIZE=large-v3-turbo
+
+# Groq Cloud AI (optional — enables cloud GPU acceleration)
+GROQ_API_KEY=gsk_your_key_here
+
+# Local Ollama (fallback when Groq is unavailable)
+OLLAMA_URL=http://localhost:11434
+```
+
+### Cloud AI (Faster, Recommended)
+
+ClipForge can use **Groq Cloud** for GPU-accelerated ASR and LLM inference — significantly faster than running locally:
+
+```env
+GROQ_API_KEY=gsk_your_key_here    # Free tier, no credit card needed
+```
+
+With Groq:
+- **Whisper** runs at ~100× realtime on Groq's LPUs (vs ~1× on CPU)
+- **LLM** uses Llama-3.3-70B at 1000+ tokens/sec (vs tiny models on local Ollama)
+- **Local Ollama container is not needed** — removed from docker-compose
+
+### Optional: Supabase / Upstash (Cloud Infrastructure)
+
+The app can use cloud services instead of local Docker:
+
+```env
+# Supabase PostgreSQL
+DATABASE_URL=postgresql+asyncpg://postgres:pass@db.project.supabase.co:5432/postgres
+
+# Upstash Redis
+REDIS_URL=rediss://default:pass@region.upstash.io:6379
+
+# Supabase Storage
+SUPABASE_STORAGE_URL=https://project.supabase.co/storage/v1
+SUPABASE_SERVICE_ROLE_KEY=your_key
+```
+
+---
+
+## API Reference
+
+### Authentication
+
+```bash
+# Register
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"secret"}'
+
+# Login
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@clipforge.dev","password":"password123"}'
+# Returns: {"access_token": "...", "token_type": "bearer"}
+```
+
+### Videos
+
+```bash
+# List videos
+curl http://localhost:8000/api/videos \
+  -H "Authorization: Bearer <token>"
+
+# Import from URL
+curl -X POST http://localhost:8000/api/videos/import \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"source_url":"https://youtube.com/watch?v=...","platform":"youtube_shorts"}'
+
+# Get video details
+curl http://localhost:8000/api/videos/{id} \
+  -H "Authorization: Bearer <token>"
+
+# Reprocess (smart resume)
+curl -X POST http://localhost:8000/api/videos/{id}/reprocess \
+  -H "Authorization: Bearer <token>"
+```
+
+### Clips
+
+```bash
+# List clips for a video
+curl "http://localhost:8000/api/clips?video_id={video_id}" \
+  -H "Authorization: Bearer <token>"
+
+# Dub a clip to Spanish
+curl -X POST http://localhost:8000/api/clips/{id}/dub \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"target_language":"es"}'
+```
+
+### WebSocket Progress
+
+```javascript
+const ws = new WebSocket(
+  `ws://localhost:8000/ws/progress/${videoId}?token=${jwt}`
+)
+ws.onmessage = (event) => {
+  const { type, job_type, progress, status, message } = JSON.parse(event.data)
+  // type: "progress"
+  // job_type: "transcription" | "nlp" | "scene_detect" | "render"
+  // progress: 0.0 - 1.0
+  // status: "running" | "completed" | "failed"
+}
+```
+
+---
+
+## Frontend Architecture
+
+### Pages
+
+| Route | Component | Description |
+|---|---|---|
+| `/` | Landing page | Public landing page |
+| `/app` | Dashboard | Video list with search, filter, stats |
+| `/app/new` | New Project | Upload file or import URL with platform selector |
+| `/app/videos/[id]` | Video Detail | Processing overlay, clip grid, stats, dubbing controls |
+| `/app/research` | Trend Research | Content factory with trend analysis |
+
+### State Management (Redux Toolkit)
+
+| Slice | State | Async Thunks |
+|---|---|---|
+| `authSlice` | token, user, loading | `checkAuth` |
+| `videoSlice` | videos[], currentVideo, loading | `fetchVideos`, `fetchVideo` |
+| `clipSlice` | clips[], loading | `fetchClips` |
+
+### Component Highlights
+
+| Component | Purpose |
+|---|---|
+| `AuthGate` | Route protection, redirects to login |
+| `Sidebar` | Navigation with user info |
+| `UploadZone` | Drag-and-drop file upload |
+| `ImportUrl` | YouTube URL import form |
+| `PlatformSelector` | Target platform dropdown |
+| `ProcessingOverlay` | Real-time pipeline progress with stage labels |
+| `ProcessingPipeline` | Animated pipeline visualization |
+| `ClipCard` | Video player, dubbing selector, description/tags, download |
+| `VideoCard` | Dashboard video grid cards |
+| `LoadingSkeleton` | Skeleton loaders for all views |
+
+---
+
+## Testing
+
+### Backend (91 tests)
+
+```bash
+cd backend && source .venv/bin/activate
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test file
+python -m pytest tests/test_pipeline.py -v
+
+# Run end-to-end workflow
+python scripts/e2e_test.py
+
+# Lint
+ruff check app/ tests/ scripts/
+```
+
+### Test Coverage
+
+| Test File | What It Validates |
+|---|---|
+| `test_pipeline.py` | Full task chain — transcription, NLP, scene detect, render, join |
+| `test_api_e2e.py` | API endpoints with mocked database |
+| `test_auth.py` | Registration, login, JWT token flow |
+| `test_nlp.py` | LLM scoring, trend boost, heuristic fallback |
+| `test_scene_detect.py` | Scene boundary detection, viral score formula |
+| `test_device.py` | GPU/CPU auto-detection |
+| `test_dubbing.py` | Translation + TTS pipeline |
+| `test_ducking.py` | FFmpeg volume ducking |
+| `test_moderation.py` | NSFW detection + keyword filtering |
+| `test_models.py` | SQLAlchemy model creation and relationships |
+| `test_trends.py` | Trending keywords, trend boost computation |
+| `test_llm.py` | Groq/Ollama LLM service |
+| `test_research.py` | Research/trend endpoints |
+
+---
+
+## Makefile Commands
+
+```bash
+make start        # Full startup (containers + API + worker + frontend)
+make up           # docker compose up -d
+make down         # docker compose down
+make build        # docker compose build
+make logs         # docker compose logs -f
+make seed         # Seed test user
+make test-backend # Run all backend tests
+make test-frontend# Run frontend lint
+make lint         # Ruff + Next lint
+```
+
+---
+
+## Data Model
+
+```
+User (id, email, password_hash, plan, created_at)
+  │
+  ├── Video (id, user_id, source_url, status, duration, title,
+  │          transcript[JSONB], segments[JSONB], language, platform, created_at)
+  │     │
+  │     ├── Clip (id, video_id, start_time, end_time, caption, score,
+  │     │          file_url, thumbnail_url, title, hashtags, dubs, created_at)
+  │     │
+  │     └── Job (id, video_id, type, status, progress, created_at)
+  │
+  └── (research videos — stored separately)
+```
+
+**Video Statuses:** `uploaded` → `processing` → `completed` | `failed`
+
+**Job Types:** `transcription` | `highlight` | `render` | `dubbing`
+
+**Job Statuses:** `queued` → `running` → `done` | `failed`
+
+---
+
+## Key Design Decisions
+
+### Smart Segmentation
+
+Whisper output is split into ~3.5-second chunks using word-level timestamps. This ensures each segment is short enough to be a standalone short-form video clip while containing complete phrases.
+
+### Parallel Pipeline
+
+After transcription completes, `run_nlp` (LLM scoring) and `run_scene_detect` (scene boundaries + audio analysis) run **in parallel** via Celery chords. A join worker merges results and triggers rendering.
+
+### Viral Score Trend Boost
+
+Segments mentioning trending topics get a 1-3× score multiplier. Trending keywords are fetched from Trend-Pulse API (free, zero auth) with a fallback of 40 static keywords and 1-hour cache.
+
+### Audio Ducking
+
+Background music is automatically reduced by -6dB during speech segments for clearer voiceover.
+
+### AI Voice Dubbing
+
+Each clip can be dubbed to 6 languages (Spanish, French, German, Portuguese, Hindi, English) via Argos Translate + Edge TTS with FFmpeg audio replacement.
+
+### Content Moderation
+
+Every rendered frame is checked for NSFW content via HuggingFace `Falconsai/nsfw_image_detection`. Flagged clips are skipped with a warning.
+
+### GPU/CPU Auto-Detection
+
+The system auto-selects CUDA → MPS (Apple Silicon) → CPU. Whisper uses float16 on GPU, int8 on CPU.
+
+---
+
+## Security
+
+- **JWT authentication** (python-jose + OAuth 2.0)
+- **bcrypt password hashing**
+- **MinIO presigned URLs** for secure upload/download
+- **GDPR-compliant** CASCADE deletion on user delete
+- **WebSocket auth** via JWT query parameter
+- **NSFW content moderation** gate
+- **Watermark-free exports** gated by Pro plan
+
+---
+
+## License
+
+MIT
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Run tests: `make test-backend`
+4. Run lint: `make lint`
+5. Submit a pull request
+
+---
+
+## Troubleshooting
+
+### Port conflicts (port 9000 in use by OrbStack)
+
+ClipForge uses port 9002 for MinIO by default to avoid conflicts with OrbStack. Update `.env`:
+```env
+MINIO_ENDPOINT=localhost:9002
+```
+
+### Celery tasks not executing
+
+```bash
+# Check Redis connectivity
+docker compose exec redis redis-cli ping
+
+# Restart worker
+pkill -f "celery.*worker" 2>/dev/null
+make start
+```
+
+### WebSocket not connecting
+
+The WebSocket URL uses `window.location.host` — this works in all environments. If using a reverse proxy, ensure WebSocket upgrade headers are forwarded.
+
+### Slow API responses
+
+Ensure you're using local PostgreSQL, Redis, and MinIO (not cloud). Each cloud round-trip adds 50-100ms latency. The `.env` defaults to local services.
+
+### Model download failures
+
+The Whisper `large-v3-turbo` model is ~1.5GB and downloads automatically on first use. If the download is interrupted, delete the partial file:
+```bash
+rm -f ~/.cache/whisper/large-v3-turbo.pt
+```
