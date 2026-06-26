@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 
@@ -18,6 +19,19 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60
     WHISPER_MODEL_SIZE: str = "large-v3-turbo"
     SENSEVOICE_DEVICE: str = "cpu"
+    
+    # Groq Cloud API settings (Free tier endpoints)
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_LLM_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_WHISPER_MODEL: str = "whisper-large-v3"
+
+    # Supabase Storage settings
+    SUPABASE_STORAGE_URL: Optional[str] = None
+    SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
+
+    # Upstash Redis REST API (for management, separate from REDIS_URL)
+    UPSTASH_REDIS_REST_URL: Optional[str] = None
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

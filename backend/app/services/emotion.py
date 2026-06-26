@@ -44,20 +44,44 @@ def _analyze_with_sensevoice(audio_path: str) -> dict[str, Any]:
         emotions = []
         events = []
         for item in result if isinstance(result, list) else [result]:
-            if hasattr(item, "emotion") and item.emotion:
-                emotions.append({
-                    "start": getattr(item, "start", 0),
-                    "end": getattr(item, "end", 0),
-                    "emotion": item.emotion,
-                    "confidence": getattr(item, "confidence", 0.0),
-                })
-            if hasattr(item, "event") and item.event:
-                events.append({
-                    "start": getattr(item, "start", 0),
-                    "end": getattr(item, "end", 0),
-                    "event": item.event,
-                    "confidence": getattr(item, "confidence", 0.0),
-                })
+            text = ""
+            if isinstance(item, dict):
+                text = item.get("text", "")
+            else:
+                text = getattr(item, "text", "")
+
+            # Scan text for emotion tags
+            for tag, emotion_name in [("<|angry|>", "angry"), ("<|sad|>", "sad"), ("<|happy|>", "happy"), ("<|neutral|>", "neutral")]:
+                if tag in text:
+                    emotions.append({
+                        "start": 0.0,
+                        "end": 3600.0,
+                        "emotion": emotion_name,
+                        "confidence": 0.8,
+                    })
+
+            # Scan text for event tags
+            for tag, event_name in [("<|laughter|>", "laughter"), ("<|applause|>", "applause"), ("<|music|>", "music"), ("<|singing|>", "music")]:
+                if tag in text:
+                    events.append({
+                        "start": 0.0,
+                        "end": 3600.0,
+                        "event": event_name,
+                        "confidence": 0.8,
+                    })
+
+            # Support direct attributes if returned in custom format
+            if isinstance(item, dict):
+                if "emotion" in item and item["emotion"]:
+                    emotions.append({"start": item.get("start", 0.0), "end": item.get("end", 3600.0), "emotion": item["emotion"], "confidence": item.get("confidence", 0.8)})
+                if "event" in item and item["event"]:
+                    events.append({"start": item.get("start", 0.0), "end": item.get("end", 3600.0), "event": item["event"], "confidence": item.get("confidence", 0.8)})
+            else:
+                if hasattr(item, "emotion") and item.emotion:
+                    emotions.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", 3600.0), "emotion": item.emotion, "confidence": getattr(item, "confidence", 0.8)})
+                if hasattr(item, "event") and item.event:
+                    events.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", 3600.0), "event": item.event, "confidence": getattr(item, "confidence", 0.8)})
+
         return {"emotions": emotions, "events": events}
     except Exception as e:
         logger.debug("SenseVoice analysis failed: %s", e)

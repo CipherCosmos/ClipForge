@@ -23,6 +23,7 @@ class VideoResponse(BaseModel):
     language: Optional[str] = None
     platform: Optional[str] = "youtube_shorts"
     viral_score: Optional[float] = None
+    thumbnail_url: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

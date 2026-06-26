@@ -113,7 +113,8 @@ class TestDubbingPipeline:
         with patch("app.workers.dubbing.SyncSessionLocal") as mock_session_cls, \
              patch("app.workers.dubbing.dub_clip") as mock_dub, \
              patch("app.workers.dubbing.httpx.Client", return_value=mock_http_client), \
-             patch("app.workers.dubbing.minio_client") as mock_minio, \
+             patch("app.workers.dubbing.upload_file") as mock_upload, \
+             patch("app.workers.dubbing.get_presigned_url") as mock_presign, \
              patch("app.workers.dubbing.ensure_bucket"):
 
             session = MagicMock()
@@ -123,7 +124,7 @@ class TestDubbingPipeline:
             ]
 
             mock_dub.return_value = True
-            mock_minio.presigned_get_object.return_value = "http://minio/dubbed.mp4"
+            mock_presign.return_value = "http://minio/dubbed.mp4"
 
             result = run_dub_clip(str(clip_id), "es")
 

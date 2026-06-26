@@ -84,7 +84,73 @@ def get_model(model_size: str | None = None) -> Any:
     return _get_cpu_model(model_size)
 
 
+def _transcribe_groq(audio_path: str) -> dict[str, Any]:
+    """Transcribe using Groq serverless Whisper API."""
+    import httpx
+    
+    logger.info("Transcribing using Groq Cloud Whisper API...")
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+    headers = {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}"
+    }
+    
+    with open(audio_path, "rb") as f:
+        files = {
+            "file": (os.path.basename(audio_path), f, "audio/wav")
+        }
+        data = {
+            "model": getattr(settings, "GROQ_WHISPER_MODEL", "whisper-large-v3"),
+            "response_format": "verbose_json"
+        }
+        
+        with httpx.Client(timeout=60.0) as client:
+            resp = client.post(url, files=files, data=data, headers=headers)
+            resp.raise_for_status()
+            result = resp.json()
+            
+    segments = []
+    for seg in result.get("segments", []):
+        start = round(seg.get("start", 0.0), 2)
+        end = round(seg.get("end", 0.0), 2)
+        text = seg.get("text", "").strip()
+        
+        # Synthesize word level timestamps to support video word highlights
+        text_words = text.split()
+        words = []
+        if text_words:
+            duration = max(0.1, end - start)
+            word_dur = duration / len(text_words)
+            for i, w in enumerate(text_words):
+                words.append({
+                    "word": w,
+                    "start": round(start + i * word_dur, 2),
+                    "end": round(start + (i + 1) * word_dur, 2),
+                    "probability": 1.0
+                })
+                
+        segments.append({
+            "start": start,
+            "end": end,
+            "text": text,
+            "words": words
+        })
+        
+    duration = round(result.get("duration", 0.0), 2)
+    if duration == 0 and segments:
+        duration = segments[-1]["end"]
+        
+    return {
+        "language": result.get("language", "en"),
+        "language_probability": 1.0,
+        "duration": duration,
+        "segments": segments
+    }
+
+
 def transcribe_audio(audio_path: str, model_size: str | None = None) -> dict[str, Any]:
+    if settings.GROQ_API_KEY:
+        return _transcribe_groq(audio_path)
+
     if model_size is None:
         model_size = _auto_model_size(audio_path)
 
@@ -105,7 +171,34 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
         "medium": "mlx-community/whisper-medium-mlx",
         "small": "mlx-community/whisper-small-mlx",
     }
-    mlx_model = model_map.get(model_size, "mlx-community/whisper-large-v3-turbo")
+    requested_model = model_map.get(model_size, "mlx-community/whisper-large-v3-turbo")
+
+    # Check cache and fall back if requested model not cached
+    def _is_cached(m_id: str) -> bool:
+        try:
+            cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+            folder = f"models--{m_id.replace('/', '--')}"
+            path = os.path.join(cache_dir, folder)
+            if not os.path.isdir(path):
+                return False
+            blobs = os.path.join(path, "blobs")
+            if os.path.isdir(blobs):
+                if any(f.endswith(".incomplete") for f in os.listdir(blobs)):
+                    return False
+            return True
+        except Exception:
+            return False
+
+    mlx_model = requested_model
+    if not _is_cached(requested_model):
+        logger.info("MLX Whisper model %s not cached. Checking for alternative cached models...", requested_model)
+        # Try finding a fully cached alternative
+        for alt_size in ["large-v3-turbo", "medium", "small"]:
+            alt_model = model_map[alt_size]
+            if alt_model != requested_model and _is_cached(alt_model):
+                logger.info("Found cached alternative: %s. Using it to avoid download.", alt_model)
+                mlx_model = alt_model
+                break
 
     logger.info("Transcribing with MLX Whisper on Metal GPU (model=%s)", mlx_model)
     t0 = time.time()

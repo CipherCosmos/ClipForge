@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit"
 import { clipsAPI } from "@/lib/api"
+import type { RootState } from "./store"
 
 export interface Clip {
   id: string
@@ -12,6 +13,7 @@ export interface Clip {
   thumbnail_url: string | null
   title: string | null
   hashtags: string | null
+  dubs?: Record<string, string>
   created_at: string
 }
 
@@ -25,10 +27,27 @@ const initialState: ClipState = {
   loading: false,
 }
 
-export const fetchClips = createAsyncThunk("clips/fetchClips", async (video_id: string) => {
-  const res = await clipsAPI.list(video_id)
-  return (res.data.items || res.data) as Clip[]
-})
+
+export const fetchClips = createAsyncThunk(
+  "clips/fetchClips",
+  async (arg: string | { video_id: string; force?: boolean }) => {
+    const video_id = typeof arg === "string" ? arg : arg.video_id
+    const res = await clipsAPI.list(video_id)
+    return (res.data.items || res.data) as Clip[]
+  },
+  {
+    condition: (arg, { getState }) => {
+      const video_id = typeof arg === "string" ? arg : arg.video_id
+      const force = typeof arg === "string" ? false : !!arg.force
+      if (force) return true
+      const state = getState() as RootState
+      // Cache hits if the loaded clips already match this video_id
+      if (state.clips.clips.length > 0 && state.clips.clips.every(c => c.video_id === video_id)) {
+        return false
+      }
+    }
+  }
+)
 
 const clipSlice = createSlice({
   name: "clips",

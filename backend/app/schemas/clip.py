@@ -16,6 +16,7 @@ class ClipResponse(BaseModel):
     thumbnail_url: str = ""
     title: str = ""
     hashtags: str = ""
+    dubs: dict[str, str] = {}
     created_at: datetime
 
     model_config = {"from_attributes": True}

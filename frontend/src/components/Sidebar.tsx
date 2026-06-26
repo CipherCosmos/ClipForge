@@ -6,13 +6,14 @@ import { RootState, AppDispatch } from "@/store/store"
 import { logout } from "@/store/authSlice"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, PlusCircle, LogOut, Sparkles, Menu, X
+  LayoutDashboard, PlusCircle, LogOut, Sparkles, Menu, X, Search
 } from "lucide-react"
 import { useState, useEffect } from "react"
 
 const NAV_ITEMS = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/new", label: "New Project", icon: PlusCircle },
+  { href: "/app/research", label: "Research & Trends", icon: Search },
 ]
 
 interface SidebarProps {

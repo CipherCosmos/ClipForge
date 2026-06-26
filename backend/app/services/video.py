@@ -16,6 +16,9 @@ def download_from_url(url: str, output_dir: Optional[str] = None) -> str:
         "outtmpl": str(Path(output_dir) / "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
+        "retries": 10,
+        "fragment_retries": 10,
+        "socket_timeout": 30,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:

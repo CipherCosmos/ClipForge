@@ -15,6 +15,7 @@ interface Video {
   language: string | null
   platform: string | null
   viral_score: number | null
+  thumbnail_url?: string | null
   created_at: string
 }
 
@@ -40,7 +41,7 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
     }
   }
 
-  const thumbnailUrl = null // We don't generate thumbnails for original videos yet
+  const thumbnailUrl = video.thumbnail_url
 
   return (
     <div

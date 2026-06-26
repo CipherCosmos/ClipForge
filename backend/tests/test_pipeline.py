@@ -32,7 +32,7 @@ def mock_video():
     video = MagicMock(spec=Video)
     video.id = video_id
     video.user_id = uuid.uuid4()
-    video.source_url = "https://example.com/test_video.mp4"
+    video.source_url = "videos/mock/test_video.mp4"
     video.status = VideoStatusEnum.PROCESSING
     video.language = "en"
     video.duration = 15.0
@@ -82,7 +82,7 @@ class TestTranscriptionStep:
 
             video = MagicMock()
             video.id = uuid.uuid4()
-            video.source_url = "http://example.com/vid.mp4"
+            video.source_url = "videos/mock/vid.mp4"
             video.segments = None
             video.transcript = None
             video.language = None
@@ -329,7 +329,7 @@ class TestPipelineChain:
             mock_sc.return_value = session
             video = MagicMock()
             video.id = uuid.uuid4()
-            video.source_url = "http://example.com/v.mp4"
+            video.source_url = "videos/mock/v.mp4"
             video.segments = None
             video.transcript = None
 
@@ -393,7 +393,7 @@ class TestPipelineChain:
             mock_sc.return_value = session
             video = MagicMock()
             video.id = uuid.uuid4()
-            video.source_url = "http://example.com/v.mp4"
+            video.source_url = "videos/mock/v.mp4"
             video.segments = [
                 {"start": 0.0, "end": 2.5, "text": "test",
                  "hook_score": 0.5, "emotion_intensity": 0.5,

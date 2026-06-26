@@ -103,7 +103,7 @@ def run_scene_detect(self, video_id: str):
 
         # ── Smart Resume: skip if segments already have scene/audio data ──
         has_scene_data = bool(segments) and all(
-            isinstance(s, dict) and s.get("scene_change_intensity") is not None
+            isinstance(s, dict) and "speaker_confidence" in s
             for s in segments
         )
 

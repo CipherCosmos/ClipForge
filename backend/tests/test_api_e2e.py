@@ -228,10 +228,12 @@ class TestSchemaValidation:
             source_url="http://example.com/vid.mp4",
             status="completed",
             duration=120.5,
+            thumbnail_url="http://example.com/thumb.jpg",
             created_at=now,
         )
         assert data.status == "completed"
         assert data.duration == 120.5
+        assert data.thumbnail_url == "http://example.com/thumb.jpg"
 
     def test_clip_response_schema(self):
         from app.schemas.clip import ClipResponse
@@ -245,10 +247,12 @@ class TestSchemaValidation:
             score=0.85,
             file_url="http://example.com/clip.mp4",
             thumbnail_url="http://example.com/thumb.jpg",
+            dubs={"es": "http://example.com/clip_es.mp4"},
             created_at=now,
         )
         assert data.thumbnail_url == "http://example.com/thumb.jpg"
         assert data.score == 0.85
+        assert data.dubs["es"] == "http://example.com/clip_es.mp4"
 
     def test_job_response_schema(self):
         from app.schemas.job import JobResponse

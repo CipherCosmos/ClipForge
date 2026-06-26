@@ -13,7 +13,7 @@ import httpx
 
 from app.config import settings
 from app.models import Clip, Video
-from app.services.storage import ensure_bucket, minio_client
+from app.services.storage import ensure_bucket, upload_file, get_presigned_url
 from app.services.translation import SUPPORTED_LANGUAGES, translate_text
 from app.services.tts import generate_speech
 from app.workers.celery_app import SyncSessionLocal, celery_app
@@ -146,9 +146,15 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
         output_path = os.path.join(tmp_dir, f"dubbed_{target_lang}.mp4")
 
         # Download the rendered clip from presigned URL
-        logger.info("Downloading clip %s from %s", clip_id, clip.file_url[:80])
+        clip_url = clip.file_url
+        if clip_url and not clip_url.startswith("http"):
+            try:
+                clip_url = get_presigned_url(clip_url)
+            except Exception as e:
+                logger.error("Failed to presign clip_url %s: %s", clip_url, e)
+        logger.info("Downloading clip %s from %s", clip_id, clip_url[:80])
         with httpx.Client(timeout=120.0, follow_redirects=True) as client:
-            resp = client.get(clip.file_url)
+            resp = client.get(clip_url)
             resp.raise_for_status()
             with open(input_path, "wb") as f:
                 f.write(resp.content)
@@ -162,10 +168,9 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
 
         # Upload dubbed clip
         ensure_bucket()
-        bucket = settings.MINIO_BUCKET
         object_name = f"dubs/{clip.video_id}/{clip_id}_{target_lang}.mp4"
-        minio_client.fput_object(bucket, object_name, output_path)
-        dubbed_url = minio_client.presigned_get_object(bucket, object_name)
+        upload_file(output_path, object_name)
+        dubbed_url = get_presigned_url(object_name)
 
         logger.info(
             "Dubbed clip uploaded: %s (lang=%s, url=%s)",

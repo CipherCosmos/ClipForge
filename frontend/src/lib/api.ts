@@ -37,9 +37,16 @@ export const videosAPI = {
 export const clipsAPI = {
   list: (video_id: string) => api.get("/clips", { params: { video_id } }),
   get: (id: string) => api.get(`/clips/${id}`),
+  dub: (clipId: string, target_lang: string) => api.post(`/clips/${clipId}/dub`, { target_lang }),
 }
 
 export const jobsAPI = {
   list: (video_id: string) => api.get("/jobs", { params: { video_id } }),
   get: (id: string) => api.get(`/jobs/${id}`),
+}
+
+export const researchAPI = {
+  trends: (geo?: string, source?: string) => api.get("/research/trends", { params: { geo, source } }),
+  analyze: (topic: string, tone?: string) => api.post("/research/analyze", { topic, tone }),
+  crawl: (query: string, videoType?: string) => api.post("/research/crawl", { query, video_type: videoType }),
 }

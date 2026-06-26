@@ -18,7 +18,7 @@ from app.models import Clip, Job, JobStatusEnum, JobTypeEnum, Video, VideoStatus
 from app.services.ducking import build_duck_filter
 from app.services.moderation import moderate_segment
 from app.services.platforms import get_preset
-from app.services.storage import download_file, ensure_bucket, minio_client
+from app.services.storage import download_file, ensure_bucket, upload_file, get_presigned_url
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,9 @@ MAX_CLIP_DURATION = 60.0
 # Pre-warm Haar cascade once at module level (avoids XML parse per call)
 _FACE_CASCADE = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
+_PROFILE_CASCADE = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_profileface.xml"
 )
 
 _DRAWTEXT_AVAILABLE: bool | None = None
@@ -90,8 +93,68 @@ BATCH_METADATA_PROMPT_TEMPLATE = (
 )
 
 
+def _score_candidate_window(segments: list[dict], i: int, j: int, duration: float, avg_score: float) -> float:
+    # 1. Apply Duration Bias (Peak at 60s / 1min)
+    duration_diff = abs(duration - 60.0)
+    duration_mult = 1.0 - 0.25 * (duration_diff / 30.0) # drops to 0.875 at 45s and 0.75 at 90s
+
+    # 2. Coherence and Punctuation/Pause heuristics
+    transition_words = {"hey", "hello", "today", "now", "so", "why", "how", "what", "did", "do", "you", "if", "when", "this", "there", "here"}
+    conjunctions = {"and", "but", "because", "or", "so that"}
+    incomplete_ends = {"the", "a", "an", "and", "but", "because", "of", "with", "is", "are", "was", "were", "has", "have", "to", "in", "on", "at", "for"}
+
+    start_score = 0.5
+    end_score = 0.5
+
+    # Analyze start boundary (segment i)
+    start_text = segments[i].get("text", "").strip()
+    first_word = start_text.split()[0].rstrip(".,?!:;").lower() if start_text.split() else ""
+
+    if i == 0:
+        start_score = 1.0
+    else:
+        prev_text = segments[i-1].get("text", "").strip()
+        if prev_text and prev_text[-1] in (".", "?", "!"):
+            start_score = 1.0
+        else:
+            pause = segments[i].get("start", 0) - segments[i-1].get("end", 0)
+            if pause >= 0.4:
+                start_score = 0.9
+            elif start_text and start_text[0].isupper() and start_text[0].isalpha():
+                start_score = 0.8
+            elif first_word in transition_words:
+                start_score = 0.8
+            elif first_word in conjunctions:
+                start_score = 0.3
+
+    # Analyze end boundary (segment j)
+    end_text = segments[j].get("text", "").strip()
+    last_word = end_text.split()[-1].rstrip(".,?!:;").lower() if end_text.split() else ""
+
+    if j == len(segments) - 1:
+        end_score = 1.0
+    else:
+        if end_text and end_text[-1] in (".", "?", "!"):
+            end_score = 1.0
+        else:
+            next_seg = segments[j+1]
+            pause = next_seg.get("start", 0) - segments[j].get("end", 0)
+            if pause >= 0.4:
+                end_score = 0.9
+            else:
+                next_text = next_seg.get("text", "").strip()
+                if next_text and next_text[0].isupper() and next_text[0].isalpha():
+                    end_score = 0.8
+                elif last_word in incomplete_ends:
+                    end_score = 0.3
+
+    coherence_mult = start_score * end_score
+    return avg_score * duration_mult * coherence_mult
+
+
 def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
-    """Identify the best 10 to 60 second clips by grouping consecutive segments.
+    """Identify the best 45 to 90 second clips by grouping consecutive segments.
+    Prefers clips close to 60 seconds and starting/ending cleanly at sentence boundaries.
     Uses sliding window + Non-Maximum Suppression (NMS) to avoid overlapping clips.
     """
     if not segments:
@@ -105,17 +168,20 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
 
     candidates = []
     
-    # 1. Generate all consecutive segment windows that are between 30s and 90s
+    # 1. Generate all consecutive segment windows that are between 45s and 90s (primary range)
     for i in range(len(segments)):
         for j in range(i, len(segments)):
             start_time = segments[i]["start"]
             end_time = segments[j]["end"]
             duration = end_time - start_time
             
-            if 30.0 <= duration <= 90.0:
+            if 45.0 <= duration <= 90.0:
                 # Calculate average viral score for the segments in this window
                 window_segs = segments[i:j+1]
                 avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
+                
+                # Apply boundary coherence and duration multiplier
+                final_score = _score_candidate_window(segments, i, j, duration, avg_score)
                 
                 joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
                 
@@ -123,13 +189,37 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
                     "start": start_time,
                     "end": end_time,
                     "text": joined_text,
-                    "viral_score": avg_score,
+                    "viral_score": final_score,
                     "segment_indices": set(range(i, j+1))
                 })
             elif duration > 90.0:
                 break
 
-    # If no candidate windows fall in the 30s-90s range, fallback to 15s-90s
+    # If no candidate windows fall in the 45s-90s range, fallback to 30s-90s
+    if not candidates:
+        logger.warning("No multi-segment windows of 45s-90s found, falling back to 30s-90s.")
+        for i in range(len(segments)):
+            for j in range(i, len(segments)):
+                start_time = segments[i]["start"]
+                end_time = segments[j]["end"]
+                duration = end_time - start_time
+                
+                if 30.0 <= duration <= 90.0:
+                    window_segs = segments[i:j+1]
+                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
+                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
+                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
+                    candidates.append({
+                        "start": start_time,
+                        "end": end_time,
+                        "text": joined_text,
+                        "viral_score": final_score,
+                        "segment_indices": set(range(i, j+1))
+                    })
+                elif duration > 90.0:
+                    break
+
+    # If still no candidate windows, fallback to 15s-90s
     if not candidates:
         logger.warning("No multi-segment windows of 30s-90s found, falling back to 15s-90s.")
         for i in range(len(segments)):
@@ -141,12 +231,13 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
                 if 15.0 <= duration <= 90.0:
                     window_segs = segments[i:j+1]
                     avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
+                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
                     joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
                     candidates.append({
                         "start": start_time,
                         "end": end_time,
                         "text": joined_text,
-                        "viral_score": avg_score,
+                        "viral_score": final_score,
                         "segment_indices": set(range(i, j+1))
                     })
                 elif duration > 90.0:
@@ -206,34 +297,86 @@ def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
 
 
 
-def _detect_face_center(video_path: str, timestamp: float) -> tuple[int, int] | None:
-    """Detect face center at given timestamp using OpenCV Haar cascade."""
+def _detect_stable_face_center(video_path: str, start_time: float, duration: float) -> tuple[int, int]:
+    """Sample multiple frames across the clip duration to find a stable face center."""
     try:
+        import numpy as np
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return None
-        cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
-        ret, frame = cap.read()
+        iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Sample up to 15 frames spaced evenly across the clip
+        num_samples = 15
+        sample_times = [start_time + (i * duration / max(1, num_samples - 1)) for i in range(num_samples)]
+        
+        detected_centers = []
+        
+        for t in sample_times:
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                continue
+            
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            
+            # 1. Try frontal face
+            faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 3)
+            
+            # 2. Try profile face (facing right)
+            if len(faces) == 0:
+                faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 3)
+                
+            # 3. Try profile face flipped (facing left)
+            if len(faces) == 0:
+                flipped = cv2.flip(gray, 1)
+                faces_flipped = _PROFILE_CASCADE.detectMultiScale(flipped, 1.1, 3)
+                if len(faces_flipped) > 0:
+                    largest_face = max(faces_flipped, key=lambda f: f[2] * f[3])
+                    xf, yf, wf, hf = largest_face
+                    # Map x back to original coordinate space
+                    faces = [(iw - xf - wf, yf, wf, hf)]
+            
+            if len(faces) > 0:
+                # Find the largest face detected
+                largest_face = max(faces, key=lambda f: f[2] * f[3])
+                x, y, w, h = largest_face
+                detected_centers.append((x + w // 2, y + h // 2))
+                
         cap.release()
-        if not ret or frame is None:
-            return None
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 4)
-        if len(faces) > 0:
-            x, y, w, h = faces[0]
-            return (x + w // 2, y + h // 2)
-        return None
+        
+        if detected_centers:
+            cxs = [c[0] for c in detected_centers]
+            cys = [c[1] for c in detected_centers]
+            cx = int(np.median(cxs))
+            cy = int(np.median(cys))
+            logger.info("Face detection successful: detected %d/%d frames. Stable center: (%d, %d) in %dx%d video", 
+                        len(detected_centers), num_samples, cx, cy, iw, ih)
+            return cx, cy
+            
+        logger.info("No faces detected in %d frames. Falling back to video center: (%d, %d)", 
+                    num_samples, iw // 2, ih // 2)
+        return iw // 2, ih // 2
     except Exception as e:
-        logger.debug("Face center detection via OpenCV failed: %s", e)
-        return None
+        logger.warning("Stable face detection failed, using center fallback: %s", e)
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if cap.isOpened():
+                iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap.release()
+                return iw // 2, ih // 2
+        except Exception:
+            pass
+        return 960, 540
 
 
 def _get_crop_filter(
     video_path: str, start_time: float, duration: float,
     preset_w: int = 1080, preset_h: int = 1920,
 ) -> str | None:
-    """Generate crop filter string based on face detection."""
+    """Generate crop filter string based on stable face detection and zoom focus."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         return None
@@ -244,14 +387,14 @@ def _get_crop_filter(
     if iw <= 0 or ih <= 0:
         return None
 
-    mid_time = start_time + duration / 2
-    center = _detect_face_center(video_path, mid_time)
-    if center is None:
-        return None
-    cx, cy = center
+    # Detect stable face center (falls back to frame center)
+    cx, cy = _detect_stable_face_center(video_path, start_time, duration)
 
-    crop_w = int(ih * preset_w / preset_h)
-    crop_h = ih
+    # Apply 1.3x zoom factor to focus/zoom on the subject/speaker
+    zoom_factor = 1.3
+    crop_h = int(ih / zoom_factor)
+    crop_w = int(crop_h * preset_w / preset_h)
+    
     if crop_w > iw:
         crop_w = iw
         crop_h = int(iw * preset_h / preset_w)
@@ -265,6 +408,7 @@ def _get_crop_filter(
     left = cx - crop_w // 2
     top = cy - crop_h // 2
 
+    # Clip to video boundaries
     left = max(0, min(left, iw - crop_w))
     top = max(0, min(top, ih - crop_h))
 
@@ -274,24 +418,18 @@ def _get_crop_filter(
 
 def _generate_hook_text(text: str) -> str:
     """Generate a punchy hook text from segment content using Ollama."""
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": (
-            "Generate a short, punchy hook text (max 60 chars) for a viral short clip. "
-            "Make it attention-grabbing. Return ONLY the text, no quotes. "
-            f"Text: {text[:500]}"
-        ),
-        "stream": False,
-    }
+    from app.services.llm import generate_llm
+    prompt = (
+        "Generate a short, punchy hook text (max 60 chars) for a viral short clip. "
+        "Make it attention-grabbing. Return ONLY the text, no quotes. "
+        f"Text: {text[:500]}"
+    )
     try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.post(f"{settings.OLLAMA_URL}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            hook = data.get("response", "").strip().strip('"\'')
-            if hook:
-                return hook[:80]
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+        data = generate_llm(prompt, format_json=False, timeout=15.0)
+        hook = data.get("response", "").strip().strip('"\'')
+        if hook:
+            return hook[:80]
+    except Exception as exc:
         logger.warning("Hook text generation failed: %s", exc)
     return text.strip()[:60]
 
@@ -526,36 +664,28 @@ def _upload_clip(
     clip_index: int,
 ) -> str:
     ensure_bucket()
-    bucket = settings.MINIO_BUCKET
     object_name = f"clips/{video_id}/{clip_index:04d}.mp4"
-    minio_client.fput_object(bucket, object_name, file_path)
+    upload_file(file_path, object_name)
     return object_name
 
 
 def _generate_clip_metadata(text: str) -> dict:
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": METADATA_PROMPT_TEMPLATE.format(text=text[:500]),
-        "stream": False,
-        "format": "json",
-    }
+    from app.services.llm import generate_llm
+    prompt = METADATA_PROMPT_TEMPLATE.format(text=text[:500])
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(f"{settings.OLLAMA_URL}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            meta = json.loads(data.get("response", "{}"))
-            title_val = str(meta.get("title") or "")
-            caption_val = str(meta.get("caption") or "")
-            hashtags_raw = meta.get("hashtags") or ""
-            hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
-            hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-            return {
-                "title": title_val[:100] if title_val else "",
-                "caption": caption_val[:500] if caption_val else text[:500],
-                "hashtags": hashtags_val if hashtags_val else "#viral",
-            }
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError) as exc:
+        data = generate_llm(prompt, format_json=True, timeout=30.0)
+        meta = json.loads(data.get("response", "{}"))
+        title_val = str(meta.get("title") or "")
+        caption_val = str(meta.get("caption") or "")
+        hashtags_raw = meta.get("hashtags") or ""
+        hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
+        hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+        return {
+            "title": title_val[:100] if title_val else "",
+            "caption": caption_val[:500] if caption_val else text[:500],
+            "hashtags": hashtags_val if hashtags_val else "#viral",
+        }
+    except Exception as exc:
         logger.warning("Metadata generation failed: %s", exc)
         return {"title": "", "caption": text[:500], "hashtags": "#viral"}
 
@@ -569,25 +699,18 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
     if not segments:
         return []
 
+    from app.services.llm import generate_llm
     numbered = "\n".join(
         f"{i+1}. {seg.get('text', '')[:300]}" for i, seg in enumerate(segments)
     )
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": BATCH_METADATA_PROMPT_TEMPLATE.format(clips=numbered),
-        "stream": False,
-        "format": "json",
-    }
+    prompt = BATCH_METADATA_PROMPT_TEMPLATE.format(clips=numbered)
     try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(f"{settings.OLLAMA_URL}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            response_text = data.get("response", "[]")
-            results = json.loads(response_text)
-            if not isinstance(results, list):
-                results = [results]
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
+        data = generate_llm(prompt, format_json=True, timeout=60.0)
+        response_text = data.get("response", "[]")
+        results = json.loads(response_text)
+        if not isinstance(results, list):
+            results = [results]
+    except Exception as exc:
         logger.warning("Batch metadata generation failed, falling back to sequential: %s", exc)
         results = []
 
@@ -777,10 +900,9 @@ def _render_compilation(
             raise RuntimeError("Compilation FFmpeg did not produce output")
 
         ensure_bucket()
-        bucket = settings.MINIO_BUCKET
         object_name = f"compilations/{video_id}/best_of.mp4"
-        minio_client.fput_object(bucket, object_name, final_path)
-        presigned_url = minio_client.presigned_get_object(bucket, object_name)
+        upload_file(final_path, object_name)
+        presigned_url = get_presigned_url(object_name)
         logger.info("Uploaded compilation to %s", presigned_url)
         return presigned_url
 
@@ -830,7 +952,7 @@ def _render_clip_parallel(args: tuple) -> dict | None:
         try:
             ensure_bucket()
             thumb_object_name = f"clips/{video_id}/{clip_idx:04d}_thumb.jpg"
-            minio_client.fput_object(settings.MINIO_BUCKET, thumb_object_name, thumbnail_path)
+            upload_file(thumbnail_path, thumb_object_name)
             thumbnail_url = thumb_object_name
         except Exception as exc:
             logger.warning("Thumbnail upload failed for clip %d: %s", clip_idx, exc)

@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit"
 import { videosAPI } from "@/lib/api"
+import type { RootState } from "./store"
 
 export interface Video {
   id: string
@@ -11,6 +12,7 @@ export interface Video {
   language: string | null
   platform: string | null
   viral_score: number | null
+  thumbnail_url: string | null
   created_at: string
 }
 
@@ -26,15 +28,47 @@ const initialState: VideoState = {
   loading: false,
 }
 
-export const fetchVideos = createAsyncThunk("videos/fetchVideos", async () => {
-  const res = await videosAPI.list()
-  return res.data.items as Video[]
-})
 
-export const fetchVideo = createAsyncThunk("videos/fetchVideo", async (id: string) => {
-  const res = await videosAPI.get(id)
-  return res.data as Video
-})
+export const fetchVideos = createAsyncThunk(
+  "videos/fetchVideos",
+  async (arg?: { force?: boolean }) => {
+    const res = await videosAPI.list()
+    return res.data.items as Video[]
+  },
+  {
+    condition: (arg, { getState }) => {
+      if (arg?.force) return true
+      const state = getState() as RootState
+      if (state.videos.videos.length > 0) {
+        return false
+      }
+    }
+  }
+)
+
+export const fetchVideo = createAsyncThunk(
+  "videos/fetchVideo",
+  async (arg: string | { id: string; force?: boolean }) => {
+    const id = typeof arg === "string" ? arg : arg.id
+    const res = await videosAPI.get(id)
+    return res.data as Video
+  },
+  {
+    condition: (arg, { getState }) => {
+      const id = typeof arg === "string" ? arg : arg.id
+      const force = typeof arg === "string" ? false : !!arg.force
+      if (force) return true
+      const state = getState() as RootState
+      if (state.videos.currentVideo?.id === id) {
+        return false
+      }
+      const existing = state.videos.videos.find(v => v.id === id)
+      if (existing && existing.status === "completed") {
+        return false
+      }
+    }
+  }
+)
 
 const videoSlice = createSlice({
   name: "videos",

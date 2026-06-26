@@ -77,8 +77,8 @@ def _diarize_fallback(audio_path: str) -> list[dict[str, Any]]:
         spectral = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=frame_length, hop_length=hop_length)[0]
         rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
 
-        # Simple threshold: speech when RMS > 0.02 and spectral centroid > 200Hz
-        threshold = max(0.02, rms.mean() * 0.5)
+        # Simple threshold: speech when RMS > threshold and spectral centroid > 200Hz
+        threshold = max(0.005, rms.mean() * 0.5)
         is_speech = (rms > threshold) & (spectral > 200.0)
 
         segments = []

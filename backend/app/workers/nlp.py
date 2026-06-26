@@ -61,37 +61,30 @@ def _heuristic_score(text: str, trending: list[str]) -> float:
 
 def _call_ollama(text: str, language: str | None = None) -> dict:
     """Mockable single segment LLM score generator."""
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": (
-            "You are a viral short expert analyzing video transcript segments. "
-            "Analyze this text for viral short potential. Rate each dimension from 0.0 to 1.0 and return ONLY valid JSON:\n"
-            "{\n"
-            "  \"hook_score\": <0.0-1.0>,\n"
-            "  \"emotion_intensity\": <0.0-1.0>,\n"
-            "  \"engagement_potential\": <0.0-1.0>,\n"
-            "  \"keyword_density\": <0.0-1.0>\n"
-            "}\n\n"
-            f'Text: "{text}"'
-        ),
-        "stream": False,
-        "format": "json",
-    }
+    from app.services.llm import generate_llm
+    prompt = (
+        "You are a viral short expert analyzing video transcript segments. "
+        "Analyze this text for viral short potential. Rate each dimension from 0.0 to 1.0 and return ONLY valid JSON:\n"
+        "{\n"
+        "  \"hook_score\": <0.0-1.0>,\n"
+        "  \"emotion_intensity\": <0.0-1.0>,\n"
+        "  \"engagement_potential\": <0.0-1.0>,\n"
+        "  \"keyword_density\": <0.0-1.0>\n"
+        "}\n\n"
+        f'Text: "{text}"'
+    )
     try:
-        with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
-            resp = client.post(f"{settings.OLLAMA_URL}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            response_text = data.get("response", "{}")
-            r = json.loads(response_text)
-            return {
-                "hook_score": max(0.0, min(1.0, float(r.get("hook_score", 0.0)))),
-                "emotion_intensity": max(0.0, min(1.0, float(r.get("emotion_intensity", 0.0)))),
-                "engagement_potential": max(0.0, min(1.0, float(r.get("engagement_potential", 0.0)))),
-                "keyword_density": max(0.0, min(1.0, float(r.get("keyword_density", 0.0)))),
-            }
+        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        response_text = data.get("response", "{}")
+        r = json.loads(response_text)
+        return {
+            "hook_score": max(0.0, min(1.0, float(r.get("hook_score", 0.0)))),
+            "emotion_intensity": max(0.0, min(1.0, float(r.get("emotion_intensity", 0.0)))),
+            "engagement_potential": max(0.0, min(1.0, float(r.get("engagement_potential", 0.0)))),
+            "keyword_density": max(0.0, min(1.0, float(r.get("keyword_density", 0.0)))),
+        }
     except Exception as exc:
-        logger.warning("Ollama single call failed: %s", exc)
+        logger.warning("LLM single call failed: %s", exc)
         return {}
 
 
@@ -100,27 +93,20 @@ def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[di
     if isinstance(_call_ollama, unittest.mock.Mock):
         return [_call_ollama(t, language) for t in texts]
 
+    from app.services.llm import generate_llm
     lang_hint = f"(language: {language}) " if language else ""
     numbered = "\n".join(
         f"{i+1}. {lang_hint}{t[:500]}" for i, t in enumerate(texts)
     )
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": BATCH_PROMPT_TEMPLATE.format(segments=numbered),
-        "stream": False,
-        "format": "json",
-    }
+    prompt = BATCH_PROMPT_TEMPLATE.format(segments=numbered)
     try:
-        with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
-            resp = client.post(f"{settings.OLLAMA_URL}/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            response_text = data.get("response", "[]")
-            results = json.loads(response_text)
-            if not isinstance(results, list):
-                results = [results]
-    except (httpx.HTTPError, json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("Ollama batch call failed: %s", exc)
+        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        response_text = data.get("response", "[]")
+        results = json.loads(response_text)
+        if not isinstance(results, list):
+            results = [results]
+    except Exception as exc:
+        logger.warning("LLM batch call failed: %s", exc)
         results = []
 
     while len(results) < len(texts):

@@ -89,12 +89,33 @@ def run_transcription(self, video_id: str):
 
             session.commit()
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = tmp.name
+            if video.source_url.startswith("http://") or video.source_url.startswith("https://"):
+                logger.info("Downloading external video %s for transcription", video_id)
+                broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading from YouTube (this may take a while)...")
+                
+                from app.services.video import download_from_url, get_video_duration
+                from app.services.storage import upload_file
+                
+                tmp_path = download_from_url(video.source_url)
+                
+                try:
+                    duration = get_video_duration(tmp_path)
+                    if duration:
+                        video.duration = duration
+                except Exception:
+                    pass
+                
+                object_name = f"videos/{video.user_id}/{uuid.uuid4()}.mp4"
+                upload_file(tmp_path, object_name)
+                video.source_url = object_name
+                session.commit()
+            else:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                    tmp_path = tmp.name
 
-            logger.info("Downloading video %s for transcription", video_id)
-            broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading media")
-            download_file(video.source_url, tmp_path)
+                logger.info("Downloading video %s from MinIO for transcription", video_id)
+                broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading media")
+                download_file(video.source_url, tmp_path)
 
             logger.info("Starting transcription for video %s", video_id)
             broadcast_sync(video_id, "transcription", 0.1, "running", "Warming up Whisper ASR")

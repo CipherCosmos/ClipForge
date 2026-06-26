@@ -8,6 +8,7 @@ from app.api.clips import router as clips_router
 from app.api.jobs import router as jobs_router
 from app.api.videos import router as videos_router
 from app.api.ws import router as ws_router
+from app.api.research import router as research_router
 from app.database import Base, engine
 from app.services.storage import ensure_bucket
 
@@ -40,6 +41,7 @@ app.include_router(videos_router)
 app.include_router(clips_router)
 app.include_router(jobs_router)
 app.include_router(ws_router)
+app.include_router(research_router)
 
 
 @app.get("/health")
