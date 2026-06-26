@@ -1,3 +1,5 @@
+import ssl
+
 from celery import Celery
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -6,9 +8,15 @@ from app.config import settings
 
 celery_app = Celery("clipforge")
 
+# SSL config for Upstash Redis (rediss:// TLS connections)
+_redis_ssl = settings.CELERY_BROKER_URL.startswith("rediss://")
+_ssl_opts = {"ssl_cert_reqs": ssl.CERT_NONE} if _redis_ssl else {}
+
 celery_app.conf.update(
     broker_url=settings.CELERY_BROKER_URL,
     result_backend=settings.CELERY_RESULT_BACKEND,
+    broker_use_ssl=_ssl_opts if _redis_ssl else None,
+    redis_backend_use_ssl=_ssl_opts if _redis_ssl else None,
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
@@ -32,6 +40,8 @@ sync_engine = create_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    pool_recycle=3600,
+    connect_args={"connect_timeout": 10},
 )
 SyncSessionLocal = sessionmaker(bind=sync_engine)
 

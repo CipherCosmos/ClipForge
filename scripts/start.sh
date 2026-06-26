@@ -9,6 +9,25 @@ FRONTEND="$ROOT/frontend"
 LOG="$ROOT/start.log"
 PID_FILE="$ROOT/.start-pids"
 
+if [ -f "$BACKEND/.env" ]; then
+  export $(grep -v '^#' "$BACKEND/.env" | xargs)
+fi
+
+IS_REMOTE_DB=false
+if [[ "$DATABASE_URL" =~ "supabase.co" ]] || [[ ! "$DATABASE_URL" =~ "localhost" && ! "$DATABASE_URL" =~ "127.0.0.1" ]]; then
+  IS_REMOTE_DB=true
+fi
+
+IS_REMOTE_STORAGE=false
+if [ -n "$SUPABASE_STORAGE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+  IS_REMOTE_STORAGE=true
+fi
+
+IS_REMOTE_REDIS=false
+if [[ "$REDIS_URL" =~ "upstash.io" ]] || [[ "$CELERY_BROKER_URL" =~ "upstash.io" ]] || [[ "$REDIS_URL" =~ "rediss://" ]]; then
+  IS_REMOTE_REDIS=true
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -27,6 +46,17 @@ cleanup() {
   echo -e "${GREEN}Local processes stopped. Docker containers keep running.${NC}"
   echo -e "${YELLOW}To stop Docker: docker compose down${NC}"
   exit 0
+}
+cleanup_port() {
+  local port=$1
+  local pids
+  pids=$(lsof -t -i :"$port" 2>/dev/null)
+  if [ -n "$pids" ]; then
+    for pid in $pids; do
+      kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 0.5
+  fi
 }
 trap cleanup SIGINT SIGTERM
 
@@ -66,23 +96,53 @@ ok "Node $(node --version)"
 # ── Docker Services ────────────────────────────
 title "Docker Services"
 
-step 4 "Starting infrastructure (PostgreSQL, Redis, MinIO, Ollama)"
+step 4 "Starting infrastructure"
 cd "$ROOT"
-# Bring up only infra services (not api/celery — those run natively for MPS)
-docker compose up -d postgres redis minio ollama --remove-orphans >> "$LOG" 2>&1
-ok "Infrastructure containers started"
+SERVICES_TO_START=""
+if [ "$IS_REMOTE_REDIS" = false ]; then
+  SERVICES_TO_START="redis"
+fi
+if [ "$IS_REMOTE_STORAGE" = false ]; then
+  SERVICES_TO_START="$SERVICES_TO_START minio"
+fi
+if [ "$IS_REMOTE_DB" = false ]; then
+  SERVICES_TO_START="$SERVICES_TO_START postgres"
+fi
+if [ -z "$GROQ_API_KEY" ]; then
+  SERVICES_TO_START="$SERVICES_TO_START ollama"
+fi
+if [ -n "$SERVICES_TO_START" ]; then
+  docker compose up -d $SERVICES_TO_START --remove-orphans >> "$LOG" 2>&1
+  ok "Infrastructure containers started"
+else
+  ok "All infrastructure is cloud-hosted — no local containers needed"
+fi
 
 echo "  Waiting for services to be healthy..."
 for i in $(seq 1 30); do
   healthy=true
-  docker compose exec -T postgres pg_isready -U clipforge &>/dev/null || healthy=false
-  docker compose exec -T redis redis-cli ping &>/dev/null || healthy=false
-  docker compose exec -T minio mc ready local &>/dev/null 2>&1 || healthy=false
+  if [ "$IS_REMOTE_DB" = false ]; then
+    docker compose exec -T postgres pg_isready -U clipforge &>/dev/null || healthy=false
+  fi
+  if [ "$IS_REMOTE_REDIS" = false ]; then
+    docker compose exec -T redis redis-cli ping &>/dev/null || healthy=false
+  fi
+  if [ "$IS_REMOTE_STORAGE" = false ]; then
+    docker compose exec -T minio mc ready local &>/dev/null 2>&1 || healthy=false
+  fi
   $healthy && break
   sleep 2
 done
-if docker compose exec -T postgres pg_isready -U clipforge &>/dev/null && \
-   docker compose exec -T redis redis-cli ping &>/dev/null; then
+
+SERVICES_READY=true
+if [ "$IS_REMOTE_DB" = false ]; then
+  docker compose exec -T postgres pg_isready -U clipforge &>/dev/null || SERVICES_READY=false
+fi
+if [ "$IS_REMOTE_REDIS" = false ]; then
+  docker compose exec -T redis redis-cli ping &>/dev/null || SERVICES_READY=false
+fi
+
+if [ "$SERVICES_READY" = true ]; then
   ok "All infrastructure services healthy"
 else
   warn "Some services may not be ready yet — check 'docker compose logs'"
@@ -90,25 +150,33 @@ fi
 
 # ── Ollama Model ──────────────────────────────
 step 5 "Pulling Ollama model"
-MODEL="${OLLAMA_MODEL:-llama3.2}"
-if docker compose exec -T ollama ollama list 2>/dev/null | grep -q "$MODEL"; then
-  ok "Ollama model '$MODEL' already pulled"
+if [ -n "$GROQ_API_KEY" ]; then
+  ok "Using Groq Cloud API — skipping Ollama model checks"
 else
-  echo "  Pulling '$MODEL' (first pull downloads ~2GB, may take a while)..."
-  docker compose exec -T ollama ollama pull "$MODEL" 2>&1 | tail -1
-  ok "Ollama model '$MODEL' ready"
+  MODEL="${OLLAMA_MODEL:-llama3.2}"
+  if docker compose exec -T ollama ollama list 2>/dev/null | grep -q "$MODEL"; then
+    ok "Ollama model '$MODEL' already pulled"
+  else
+    echo "  Pulling '$MODEL' (first pull downloads ~2GB, may take a while)..."
+    docker compose exec -T ollama ollama pull "$MODEL" 2>&1 | tail -1
+    ok "Ollama model '$MODEL' ready"
+  fi
 fi
 
-# ── MinIO Bucket ──────────────────────────────
-step 6 "Creating MinIO bucket"
+# ── Storage Bucket ──────────────────────────────
+step 6 "Creating storage bucket"
 BUCKET="${MINIO_BUCKET:-clipforge-media}"
-docker compose exec -T minio mc alias ls local &>/dev/null 2>&1 || \
-  docker compose exec -T minio mc alias set local http://localhost:9000 clipforge clipforge_dev &>/dev/null 2>&1 || true
-if docker compose exec -T minio mc ls "local/$BUCKET" &>/dev/null 2>&1; then
-  ok "MinIO bucket '$BUCKET' exists"
+if [ "$IS_REMOTE_STORAGE" = true ]; then
+  ok "Using Supabase Storage — bucket managed remotely"
 else
-  docker compose exec -T minio mc mb "local/$BUCKET" 2>&1 | head -1
-  ok "MinIO bucket '$BUCKET' created"
+  docker compose exec -T minio mc alias ls local &>/dev/null 2>&1 || \
+    docker compose exec -T minio mc alias set local http://localhost:9000 clipforge clipforge_dev &>/dev/null 2>&1 || true
+  if docker compose exec -T minio mc ls "local/$BUCKET" &>/dev/null 2>&1; then
+    ok "MinIO bucket '$BUCKET' exists"
+  else
+    docker compose exec -T minio mc mb "local/$BUCKET" 2>&1 | head -1
+    ok "MinIO bucket '$BUCKET' created"
+  fi
 fi
 
 # ── Python Virtual Environment ────────────────
@@ -195,6 +263,11 @@ cd "$ROOT"
 # ── Start Services ────────────────────────────
 title "Starting Services"
 
+echo -e "  ${YELLOW}Cleaning up any stale processes...${NC}"
+cleanup_port 8000
+cleanup_port 3000
+pkill -f "celery.*worker" 2>/dev/null || true
+
 echo ""
 rm -f "$PID_FILE"
 
@@ -255,16 +328,36 @@ echo -n "  Celery worker............ "
 if pgrep -f "celery.*worker" > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
 
 echo -n "  PostgreSQL............... "
-if docker compose exec -T postgres pg_isready -U clipforge &>/dev/null; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+if [ "$IS_REMOTE_DB" = true ]; then
+  if python3 -c "import sys, psycopg2; dsn = '$DATABASE_URL_SYNC'.replace('postgresql+psycopg2://', 'postgresql://'); conn = psycopg2.connect(dsn); conn.close()" 2>/dev/null; then
+    echo -e "${GREEN}✓ (Remote Supabase)${NC}"
+  else
+    echo -e "${RED}✗ (Remote connection failed)${NC}"
+  fi
+else
+  if docker compose exec -T postgres pg_isready -U clipforge &>/dev/null; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+fi
 
 echo -n "  Redis.................... "
-if docker compose exec -T redis redis-cli ping &>/dev/null; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+if [ "$IS_REMOTE_REDIS" = true ]; then
+  echo -e "${GREEN}✓ (Remote Upstash Redis)${NC}"
+else
+  if docker compose exec -T redis redis-cli ping &>/dev/null; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+fi
 
-echo -n "  MinIO.................... "
-if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+echo -n "  Storage.................. "
+if [ "$IS_REMOTE_STORAGE" = true ]; then
+  echo -e "${GREEN}✓ (Remote Supabase Storage)${NC}"
+else
+  if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+fi
 
 echo -n "  Ollama................... "
-if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+if [ -n "$GROQ_API_KEY" ]; then
+  echo -e "${YELLOW}Skipped (Groq API Active)${NC}"
+else
+  if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+fi
 
 # ── Done ──────────────────────────────────────
 title "ClipForge is Running"

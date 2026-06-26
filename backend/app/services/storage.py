@@ -39,7 +39,7 @@ def get_supabase_http() -> httpx.Client:
             "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
             "apikey": settings.SUPABASE_SERVICE_ROLE_KEY,
         }
-        _supabase_http = httpx.Client(headers=headers, timeout=None)
+        _supabase_http = httpx.Client(headers=headers, timeout=httpx.Timeout(30.0, connect=10.0))
     return _supabase_http
 
 
