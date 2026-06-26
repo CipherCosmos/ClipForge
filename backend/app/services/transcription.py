@@ -88,6 +88,11 @@ def _auto_model_size(audio_path: str) -> str:
     return settings.WHISPER_MODEL_SIZE
 
 
+# ── Custom exception ────────────────────────────────────────────────────────
+class _GroqOverloadError(Exception):
+    """Raised when Groq API rejects the request (too large, rate limited, etc.)"""
+
+
 # ── Public API ─────────────────────────────────────────────────────────────
 def get_model(model_size: str | None = None) -> Any:
     return _get_local_model(model_size)
@@ -96,21 +101,56 @@ def get_model(model_size: str | None = None) -> Any:
 # ── Groq Cloud API (fastest, any platform) ─────────────────────────────────
 def _transcribe_groq(audio_path: str) -> dict[str, Any]:
     import httpx
+    import subprocess
+    import tempfile
 
     logger.info("Transcribing via Groq Cloud Whisper API...")
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
+    
+    # Compress audio if it exceeds Groq's 25MB limit
+    file_size = os.path.getsize(audio_path)
+    upload_path = audio_path
+    needs_cleanup = False
+    
+    if file_size > 20 * 1024 * 1024:  # 20MB — compress before upload
+        try:
+            fd, upload_path = tempfile.mkstemp(suffix=".mp3")
+            os.close(fd)
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000",
+                 "-b:a", "32k", "-f", "mp3", upload_path],
+                capture_output=True, timeout=60, check=True
+            )
+            needs_cleanup = True
+            logger.info("Compressed audio from %.1fMB to %.1fMB for Groq upload",
+                        file_size / 1e6, os.path.getsize(upload_path) / 1e6)
+        except Exception as e:
+            logger.warning("Audio compression failed: %s, uploading original", e)
+            upload_path = audio_path
 
-    with open(audio_path, "rb") as f:
-        files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
+    with open(upload_path, "rb") as f:
+        files = {"file": (os.path.basename(upload_path), f, "audio/mp3" if upload_path.endswith('.mp3') else "audio/wav")}
         data = {
             "model": getattr(settings, "GROQ_WHISPER_MODEL", "whisper-large-v3"),
             "response_format": "verbose_json",
         }
         with httpx.Client(timeout=180.0) as client:
             resp = client.post(url, files=files, data=data, headers=headers)
+            
+            # If still too large, fall back to local transcription
+            if resp.status_code == 413:
+                logger.warning("Groq rejected audio (413), falling back to local transcription")
+                if needs_cleanup and upload_path != audio_path:
+                    os.unlink(upload_path)
+                raise _GroqOverloadError("Groq payload too large")
+            
             resp.raise_for_status()
             result = resp.json()
+    
+    if needs_cleanup and upload_path != audio_path:
+        try: os.unlink(upload_path)
+        except: pass
 
     segments = []
     for seg in result.get("segments", []):
@@ -145,14 +185,16 @@ def _transcribe_groq(audio_path: str) -> dict[str, Any]:
 def transcribe_audio(audio_path: str, model_size: str | None = None) -> dict[str, Any]:
     """Transcribe audio using the best available backend for this platform."""
     if settings.GROQ_API_KEY:
-        return _transcribe_groq(audio_path)
+        try:
+            return _transcribe_groq(audio_path)
+        except _GroqOverloadError:
+            logger.info("Groq unavailable for this audio, falling back to local transcription")
 
     if model_size is None:
         model_size = _auto_model_size(audio_path)
 
     if _has_mlx():
         return _transcribe_mlx(audio_path, model_size)
-
     return _transcribe_local(audio_path, model_size)
 
 
