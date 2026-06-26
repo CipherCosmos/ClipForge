@@ -21,37 +21,23 @@ Upload any video (or paste a YouTube URL) → ClipForge automatically transcribe
 ## Pipeline Overview
 
 ```mermaid
-graph LR
-    A[Upload / URL] --> B[Transcribe<br/>Whisper ASR]
-    B --> C[Segment into<br/>~3s chunks]
-    C --> D1[Viral Scoring<br/>Groq LLM]
-    C --> D2[Scene Detect<br/>PySceneDetect]
-    C --> D3[Audio Analysis<br/>SenseVoice + librosa]
-    C --> D4[Speaker Diarization<br/>Silero VAD]
-    D1 --> E[Join + Merge<br/>Viral Scores]
+flowchart LR
+    A["Upload / URL"] --> B["Transcribe (Whisper)"]
+    B --> C["Segment into ~3s chunks"]
+    C --> D1["Viral Scoring (Groq LLM)"]
+    C --> D2["Scene Detect (PySceneDetect)"]
+    C --> D3["Audio Analysis"]
+    C --> D4["Speaker Diarization"]
+    D1 --> E["Join + Merge Scores"]
     D2 --> E
     D3 --> E
     D4 --> E
-    E --> F[Select Top Segments]
-    F --> G[Render Clips<br/>FFmpeg]
-    G --> H[Generate Metadata<br/>Title, Caption, Hashtags]
-    H --> I[Export / Download]
-    G --> J[Multi-Highlight<br/>Compilation]
+    E --> F["Select Top Segments"]
+    F --> G["Render Clips (FFmpeg)"]
+    G --> H["Generate Metadata"]
+    H --> I["Export / Download"]
+    G --> J["Multi-Highlight Compilation"]
     J --> I
-
-    style A fill:#2d3748,stroke:#4a5568,color:#fff
-    style B fill:#553c9a,stroke:#805ad5,color:#fff
-    style C fill:#553c9a,stroke:#805ad5,color:#fff
-    style D1 fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style D2 fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style D3 fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style D4 fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style E fill:#553c9a,stroke:#805ad5,color:#fff
-    style F fill:#c05621,stroke:#dd6b20,color:#fff
-    style G fill:#c05621,stroke:#dd6b20,color:#fff
-    style H fill:#c05621,stroke:#dd6b20,color:#fff
-    style I fill:#276749,stroke:#38a169,color:#fff
-    style J fill:#c05621,stroke:#dd6b20,color:#fff
 ```
 
 **End-to-end processing in 2-5 minutes for a 5-minute video.**
@@ -61,58 +47,49 @@ graph LR
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph Browser["Browser"]
-        NEXT[Next.js Frontend<br/>localhost:3000]
+flowchart TB
+    subgraph Browser["Browser (Next.js localhost:3000)"]
+        NEXT[("Next.js Frontend")]
     end
 
-    subgraph API["API Server"]
-        FA[FastAPI<br/>localhost:8000]
-        WS[WebSocket<br/>/ws/progress/{id}]
+    subgraph API["API Server (FastAPI localhost:8000)"]
+        FA[FastAPI]
+        WS["WebSocket /ws/progress/{id}"]
     end
 
     subgraph Storage["Storage"]
-        MINIO[MinIO S3<br/>localhost:9002]
-        PG[PostgreSQL<br/>localhost:5432]
-        RD[Redis Queue<br/>localhost:6379]
+        MINIO[MinIO S3]
+        PG[PostgreSQL]
+        RD[Redis Queue]
     end
 
     subgraph Worker["Celery Worker"]
-        T[Transcription<br/>MLX Whisper / Groq]
-        N[NLP Scoring<br/>Groq LLM]
-        SD[Scene Detect<br/>PySceneDetect + SenseVoice]
-        J[Join + Merge<br/>Viral Scores]
-        R[Render<br/>FFmpeg]
+        T["Transcription (Whisper)"]
+        N["NLP Scoring (Groq LLM)"]
+        SD["Scene Detect + Audio"]
+        J["Join + Merge"]
+        R["Render (FFmpeg)"]
     end
 
     subgraph Cloud["Cloud GPU (Optional)"]
-        GROQ[Groq API<br/>Whisper + Llama-3.3-70B]
+        GROQ["Groq API (Whisper + Llama)"]
     end
 
-    NEXT -->|HTTP REST + WS| FA
-    FA -->|S3 API| MINIO
-    FA -->|SQL| PG
-    FA -->|Celery Tasks| RD
-    RD -->|Consume| T
-    T -->|Parallel Chord| N
-    T -->|Parallel Chord| SD
+    NEXT -- HTTP + WS --> FA
+    FA -- S3 API --> MINIO
+    FA -- SQL --> PG
+    FA -- Tasks --> RD
+    RD -- Consume --> T
+    T -- Chord --> N
+    T -- Chord --> SD
     N --> J
     SD --> J
     J --> R
-    R -->|Upload Clips| MINIO
-    T -.->|Cloud GPU| GROQ
-    N -.->|Cloud LLM| GROQ
-    FA <-->|WS Progress| WS
-    WS -.->|Broadcast| NEXT
-
-    style NEXT fill:#1a1a2e,stroke:#e94560,color:#fff
-    style FA fill:#16213e,stroke:#0f3460,color:#fff
-    style GROQ fill:#1a1a2e,stroke:#0f3460,color:#aaa
-    style T fill:#533483,stroke:#e94560,color:#fff
-    style N fill:#533483,stroke:#e94560,color:#fff
-    style SD fill:#533483,stroke:#e94560,color:#fff
-    style J fill:#533483,stroke:#e94560,color:#fff
-    style R fill:#533483,stroke:#e94560,color:#fff
+    R -- Upload --> MINIO
+    T -.-> GROQ
+    N -.-> GROQ
+    FA <--> WS
+    WS -.-> NEXT
 ```
 
 ---
@@ -138,30 +115,17 @@ graph TB
 ### Viral Score Formula
 
 ```mermaid
-graph TD
-    subgraph Dimensions["8 Scoring Dimensions"]
-        H[hook_score] -->|0.25| FINAL
-        E[emotion_intensity] -->|0.20| FINAL
-        EN[engagement_potential] -->|0.15| FINAL
-        K[keyword_density] -->|0.10| FINAL
-        SC[scene_change_intensity] -->|0.10| FINAL
-        AE[audio_event_score] -->|0.10| FINAL
-        AEG[audio_energy] -->|0.05| FINAL
-        SP[speaker_confidence] -->|0.05| FINAL
-    end
-
-    FINAL[base_score] -->|× trend_boost 1-3×| FINAL_SCORE[Final Viral Score]
-
-    style FINAL fill:#553c9a,stroke:#805ad5,color:#fff
-    style FINAL_SCORE fill:#e94560,stroke:#ff6b6b,color:#fff
-    style H fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style E fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style EN fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style K fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style SC fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style AE fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style AEG fill:#2b6cb0,stroke:#3182ce,color:#fff
-    style SP fill:#2b6cb0,stroke:#3182ce,color:#fff
+flowchart TD
+    H["hook_score (0.25)"] --> FINAL
+    E["emotion_intensity (0.20)"] --> FINAL
+    EN["engagement_potential (0.15)"] --> FINAL
+    K["keyword_density (0.10)"] --> FINAL
+    SC["scene_change_intensity (0.10)"] --> FINAL
+    AE["audio_event_score (0.10)"] --> FINAL
+    AEG["audio_energy (0.05)"] --> FINAL
+    SP["speaker_confidence (0.05)"] --> FINAL
+    FINAL["Base Score"] --> BOOST["x trend_boost (1-3x)"]
+    BOOST --> RESULT["Final Viral Score"]
 ```
 
 Then multiplied by `trend_boost` (1-3×) if segment contains trending keywords.
