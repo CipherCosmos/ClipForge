@@ -108,9 +108,7 @@ fi
 if [ "$IS_REMOTE_DB" = false ]; then
   SERVICES_TO_START="$SERVICES_TO_START postgres"
 fi
-if [ -z "$GROQ_API_KEY" ]; then
-  SERVICES_TO_START="$SERVICES_TO_START ollama"
-fi
+# Groq handles LLM + Whisper — no local Ollama needed
 if [ -n "$SERVICES_TO_START" ]; then
   docker compose up -d $SERVICES_TO_START --remove-orphans >> "$LOG" 2>&1
   ok "Infrastructure containers started"
@@ -349,7 +347,7 @@ echo -n "  Storage.................. "
 if [ "$IS_REMOTE_STORAGE" = true ]; then
   echo -e "${GREEN}✓ (Remote Supabase Storage)${NC}"
 else
-  if curl -s http://localhost:9000/minio/health/live > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
+  if curl -s http://localhost:9002/minio/health/live > /dev/null 2>&1; then echo -e "${GREEN}✓${NC}"; else echo -e "${RED}✗${NC}"; fi
 fi
 
 echo -n "  Ollama................... "
@@ -364,8 +362,7 @@ title "ClipForge is Running"
 echo ""
 echo -e "  ${GREEN}Frontend:${NC}    http://localhost:3000"
 echo -e "  ${GREEN}API docs:${NC}    http://localhost:8000/docs"
-echo -e "  ${GREEN}MinIO:${NC}       http://localhost:9001 (clipforge / clipforge_dev)"
-echo -e "  ${GREEN}Ollama:${NC}      http://localhost:11434"
+  echo -e "  ${GREEN}MinIO:${NC}       http://localhost:9003 (clipforge / clipforge_dev)"
 echo ""
 echo -e "  ${YELLOW}Login:${NC}       test@clipforge.dev / password123"
 echo ""
