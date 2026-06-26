@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 60
     WHISPER_MODEL_SIZE: str = "large-v3-turbo"
-    SENSEVOICE_DEVICE: str = "cpu"
+    SENSEVOICE_DEVICE: str = "auto"
     
     # Groq Cloud API settings (Free tier endpoints)
     GROQ_API_KEY: Optional[str] = None

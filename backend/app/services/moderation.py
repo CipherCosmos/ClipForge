@@ -27,10 +27,13 @@ def _get_nsfw_classifier():
             return _nsfw_classifier
         try:
             from transformers import pipeline
+            from app.services.device import get_optimal_device
+            nsfw_device = get_optimal_device()
+            nsfw_device_id = -1 if nsfw_device == "cpu" else 0
             _nsfw_classifier = pipeline(
                 "image-classification",
                 model="Falconsai/nsfw_image_detection",
-                device=-1,  # CPU
+                device=nsfw_device_id,
             )
             # After first successful load, prevent HuggingFace HTTP checks
             os.environ["HF_HUB_OFFLINE"] = "1"

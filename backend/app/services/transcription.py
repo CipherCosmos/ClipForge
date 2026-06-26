@@ -1,23 +1,34 @@
+"""Transcription service — auto-selects best backend for current platform.
+
+Backend priority:
+  1. Groq Cloud API (if GROQ_API_KEY is set) — fastest, ~100x realtime
+  2. MLX Whisper (macOS Apple Silicon) — Metal GPU, ~10x realtime
+  3. faster-whisper CUDA (Windows/Linux with NVIDIA GPU) — ~5-10x realtime
+  4. faster-whisper CPU (fallback, any OS) — ~1-3x realtime with int8
+"""
+
 import logging
 import os
 import sys
 import time
 from typing import Any
 
-import numpy as np
-
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-os.environ.setdefault("OMP_NUM_THREADS", "6")
-os.environ.setdefault("TORCH_NUM_THREADS", "6")
 
-# ── MLX Whisper availability ──────────────────────────────────────────────
+# ── Thread counts ───────────────────────────────────────────────────────────
+_dynamic_threads = max(2, min(8, (os.cpu_count() or 4) // 2))
+os.environ.setdefault("OMP_NUM_THREADS", str(_dynamic_threads))
+os.environ.setdefault("TORCH_NUM_THREADS", str(_dynamic_threads))
+
+
+# ── MLX Whisper availability (Apple Silicon only) ──────────────────────────
 _mlx_available: bool | None = None
 
+
 def _has_mlx() -> bool:
-    """Check if MLX Whisper is available (Apple Silicon only)."""
     global _mlx_available
     if _mlx_available is not None:
         return _mlx_available
@@ -27,40 +38,39 @@ def _has_mlx() -> bool:
     try:
         import mlx_whisper
         _mlx_available = True
-        logger.info("MLX Whisper available — will use Metal GPU for transcription")
+        logger.info("MLX Whisper available — will use Metal GPU")
     except ImportError:
         _mlx_available = False
-        logger.info("MLX Whisper not available — falling back to faster-whisper CPU")
     return _mlx_available
 
 
-# ── faster-whisper CPU model cache ────────────────────────────────────────
-_cpu_model: dict[str, Any] = {}
+# ── faster-whisper model cache ─────────────────────────────────────────────
+_local_model: dict[str, Any] = {}
 
-def _get_cpu_model(model_size: str | None = None) -> Any:
-    global _cpu_model
+
+def _get_local_model(model_size: str | None = None) -> Any:
+    global _local_model
     model_size = model_size or settings.WHISPER_MODEL_SIZE
-    if model_size in _cpu_model:
-        return _cpu_model[model_size]
+    if model_size in _local_model:
+        return _local_model[model_size]
 
     from faster_whisper import WhisperModel
-    from app.services.device import get_whisper_compute_type, get_whisper_device
+    from app.services.device import get_whisper_compute_type, get_whisper_device, get_optimal_threads
+
     device = get_whisper_device()
     compute_type = get_whisper_compute_type(device)
+    threads = get_optimal_threads()
 
-    cores = os.cpu_count() or 4
-    cpu_threads = max(4, min(8, cores // 2))
-
-    logger.info("Loading faster-whisper %s on %s (compute_type=%s, cpu_threads=%d)",
-                model_size, device, compute_type, cpu_threads)
-    m = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=cpu_threads)
-    logger.info("faster-whisper model loaded")
-    _cpu_model[model_size] = m
+    logger.info("Loading Whisper %s on %s (compute=%s, threads=%d)",
+                model_size, device, compute_type, threads)
+    m = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=threads)
+    _local_model[model_size] = m
     return m
 
 
 # ── Model size auto-selection ─────────────────────────────────────────────
 def _auto_model_size(audio_path: str) -> str:
+    """Pick smaller model for very long audio (over 30 min) to save memory."""
     try:
         import subprocess
         result = subprocess.run(
@@ -78,43 +88,35 @@ def _auto_model_size(audio_path: str) -> str:
     return settings.WHISPER_MODEL_SIZE
 
 
-# ── Public API ────────────────────────────────────────────────────────────
+# ── Public API ─────────────────────────────────────────────────────────────
 def get_model(model_size: str | None = None) -> Any:
-    """Get the CPU model (for backward compat with tests)."""
-    return _get_cpu_model(model_size)
+    return _get_local_model(model_size)
 
 
+# ── Groq Cloud API (fastest, any platform) ─────────────────────────────────
 def _transcribe_groq(audio_path: str) -> dict[str, Any]:
-    """Transcribe using Groq serverless Whisper API."""
     import httpx
-    
-    logger.info("Transcribing using Groq Cloud Whisper API...")
+
+    logger.info("Transcribing via Groq Cloud Whisper API...")
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
-    headers = {
-        "Authorization": f"Bearer {settings.GROQ_API_KEY}"
-    }
-    
+    headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
+
     with open(audio_path, "rb") as f:
-        files = {
-            "file": (os.path.basename(audio_path), f, "audio/wav")
-        }
+        files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
         data = {
             "model": getattr(settings, "GROQ_WHISPER_MODEL", "whisper-large-v3"),
-            "response_format": "verbose_json"
+            "response_format": "verbose_json",
         }
-        
-        with httpx.Client(timeout=60.0) as client:
+        with httpx.Client(timeout=180.0) as client:
             resp = client.post(url, files=files, data=data, headers=headers)
             resp.raise_for_status()
             result = resp.json()
-            
+
     segments = []
     for seg in result.get("segments", []):
         start = round(seg.get("start", 0.0), 2)
         end = round(seg.get("end", 0.0), 2)
         text = seg.get("text", "").strip()
-        
-        # Synthesize word level timestamps to support video word highlights
         text_words = text.split()
         words = []
         if text_words:
@@ -122,32 +124,26 @@ def _transcribe_groq(audio_path: str) -> dict[str, Any]:
             word_dur = duration / len(text_words)
             for i, w in enumerate(text_words):
                 words.append({
-                    "word": w,
-                    "start": round(start + i * word_dur, 2),
-                    "end": round(start + (i + 1) * word_dur, 2),
-                    "probability": 1.0
+                    "word": w, "start": round(start + i * word_dur, 2),
+                    "end": round(start + (i + 1) * word_dur, 2), "probability": 1.0,
                 })
-                
-        segments.append({
-            "start": start,
-            "end": end,
-            "text": text,
-            "words": words
-        })
-        
+        segments.append({"start": start, "end": end, "text": text, "words": words})
+
     duration = round(result.get("duration", 0.0), 2)
     if duration == 0 and segments:
         duration = segments[-1]["end"]
-        
+
     return {
         "language": result.get("language", "en"),
         "language_probability": 1.0,
         "duration": duration,
-        "segments": segments
+        "segments": segments,
     }
 
 
+# ── Main entry point ───────────────────────────────────────────────────────
 def transcribe_audio(audio_path: str, model_size: str | None = None) -> dict[str, Any]:
+    """Transcribe audio using the best available backend for this platform."""
     if settings.GROQ_API_KEY:
         return _transcribe_groq(audio_path)
 
@@ -156,15 +152,14 @@ def transcribe_audio(audio_path: str, model_size: str | None = None) -> dict[str
 
     if _has_mlx():
         return _transcribe_mlx(audio_path, model_size)
-    return _transcribe_cpu(audio_path, model_size)
+
+    return _transcribe_local(audio_path, model_size)
 
 
-# ── MLX Whisper (Metal GPU — 10-15x faster) ──────────────────────────────
+# ── MLX Whisper (macOS Metal GPU — ~10x realtime) ─────────────────────────
 def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict[str, Any]:
-    """Transcribe using MLX Whisper on Apple Metal GPU."""
     import mlx_whisper
 
-    # Map model sizes to HuggingFace MLX model IDs
     model_map = {
         "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
         "large-v3": "mlx-community/whisper-large-v3-turbo",
@@ -173,7 +168,6 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
     }
     requested_model = model_map.get(model_size, "mlx-community/whisper-large-v3-turbo")
 
-    # Check cache and fall back if requested model not cached
     def _is_cached(m_id: str) -> bool:
         try:
             cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
@@ -182,21 +176,17 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
             if not os.path.isdir(path):
                 return False
             blobs = os.path.join(path, "blobs")
-            if os.path.isdir(blobs):
-                if any(f.endswith(".incomplete") for f in os.listdir(blobs)):
-                    return False
+            if os.path.isdir(blobs) and any(f.endswith(".incomplete") for f in os.listdir(blobs)):
+                return False
             return True
         except Exception:
             return False
 
     mlx_model = requested_model
     if not _is_cached(requested_model):
-        logger.info("MLX Whisper model %s not cached. Checking for alternative cached models...", requested_model)
-        # Try finding a fully cached alternative
         for alt_size in ["large-v3-turbo", "medium", "small"]:
             alt_model = model_map[alt_size]
             if alt_model != requested_model and _is_cached(alt_model):
-                logger.info("Found cached alternative: %s. Using it to avoid download.", alt_model)
                 mlx_model = alt_model
                 break
 
@@ -204,14 +194,12 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
     t0 = time.time()
 
     result = mlx_whisper.transcribe(
-        audio_path,
-        path_or_hf_repo=mlx_model,
-        word_timestamps=True,
-        verbose=False,
+        audio_path, path_or_hf_repo=mlx_model,
+        word_timestamps=True, verbose=False,
     )
 
     elapsed = time.time() - t0
-    logger.info("MLX Whisper transcription completed in %.2fs", elapsed)
+    logger.info("MLX Whisper done in %.2fs", elapsed)
 
     segments = []
     for seg in result.get("segments", []):
@@ -219,15 +207,12 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
             "start": round(seg["start"], 2),
             "end": round(seg["end"], 2),
             "text": seg["text"].strip(),
-            "words": [
-                {
-                    "word": w["word"].strip(),
-                    "start": round(w["start"], 2),
-                    "end": round(w["end"], 2),
-                    "probability": w.get("probability", 0.0),
-                }
-                for w in seg.get("words", [])
-            ],
+            "words": [{
+                "word": w["word"].strip(),
+                "start": round(w["start"], 2),
+                "end": round(w["end"], 2),
+                "probability": w.get("probability", 0.0),
+            } for w in seg.get("words", [])],
         })
 
     duration = round(segments[-1]["end"], 2) if segments else 0
@@ -239,29 +224,36 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
     }
 
 
-# ── faster-whisper CPU (fallback) ────────────────────────────────────────
-def _transcribe_cpu(audio_path: str, model_size: str = "large-v3") -> dict[str, Any]:
+# ── faster-whisper (CUDA GPU or CPU) ──────────────────────────────────────
+def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> dict[str, Any]:
+    """Transcribe using faster-whisper on the detected device (CUDA or CPU).
+
+    On Windows/Linux with NVIDIA GPU: uses CUDA float16 for ~5-10x realtime.
+    On any system without GPU: uses CPU int8.
+    """
     from faster_whisper import WhisperModel
     from faster_whisper.audio import decode_audio
     from concurrent.futures import ThreadPoolExecutor
+    from app.services.device import get_whisper_device, get_cuda_vram_gb
 
-    model = _get_cpu_model(model_size)
+    model = _get_local_model(model_size)
+    device = get_whisper_device()
+    is_cuda = device == "cuda"
 
-    # Decode audio to numpy array for chunking
-    logger.info("Decoding audio for parallel transcription...")
+    logger.info("Decoding audio for transcription...")
     audio = decode_audio(audio_path, sampling_rate=16000)
     total_duration = len(audio) / 16000
-    logger.info("Audio decoded: %.2f seconds", total_duration)
+    logger.info("Audio decoded: %.2f seconds on %s", total_duration, device)
 
     t0 = time.time()
 
-    # For short audio (<= 2 min), use sequential transcription (no overhead)
-    if total_duration <= 120:
+    # CUDA path: single-pass, larger beam for quality
+    if is_cuda:
+        vram_gb = get_cuda_vram_gb()
+        beam = 5 if vram_gb >= 8 else 3
+        logger.info("CUDA transcription: beam_size=%d, VRAM=%.1fGB", beam, vram_gb)
         segments, info = model.transcribe(
-            audio,
-            beam_size=1,
-            best_of=1,
-            word_timestamps=True,
+            audio, beam_size=beam, word_timestamps=True,
         )
         results = []
         for segment in segments:
@@ -269,18 +261,14 @@ def _transcribe_cpu(audio_path: str, model_size: str = "large-v3") -> dict[str, 
                 "start": round(segment.start, 2),
                 "end": round(segment.end, 2),
                 "text": segment.text.strip(),
-                "words": [
-                    {
-                        "word": w.word,
-                        "start": round(w.start, 2),
-                        "end": round(w.end, 2),
-                        "probability": w.probability,
-                    }
-                    for w in (segment.words or [])
-                ],
+                "words": [{
+                    "word": w.word, "start": round(w.start, 2),
+                    "end": round(w.end, 2), "probability": w.probability,
+                } for w in (segment.words or [])],
             })
         elapsed = time.time() - t0
-        logger.info("Sequential transcription completed in %.2fs", elapsed)
+        logger.info("CUDA transcription done in %.2fs (x%.1f realtime)",
+                    elapsed, total_duration / elapsed if elapsed else 0)
         return {
             "language": info.language,
             "language_probability": info.language_probability,
@@ -288,57 +276,59 @@ def _transcribe_cpu(audio_path: str, model_size: str = "large-v3") -> dict[str, 
             "segments": results,
         }
 
-    # For long audio, use parallel chunked transcription
-    # Step 1: Detect language from first 30 seconds
+    # CPU path: sequential for short audio, parallel chunks for long
+    if total_duration <= 120:
+        segments, info = model.transcribe(
+            audio, beam_size=1, best_of=1, word_timestamps=True,
+        )
+        results = []
+        for segment in segments:
+            results.append({
+                "start": round(segment.start, 2),
+                "end": round(segment.end, 2),
+                "text": segment.text.strip(),
+                "words": [{
+                    "word": w.word, "start": round(w.start, 2),
+                    "end": round(w.end, 2), "probability": w.probability,
+                } for w in (segment.words or [])],
+            })
+        elapsed = time.time() - t0
+        logger.info("CPU transcription done in %.2fs", elapsed)
+        return {
+            "language": info.language,
+            "language_probability": info.language_probability,
+            "duration": round(info.duration, 2) if info.duration else 0,
+            "segments": results,
+        }
+
+    # Long audio CPU path: parallel chunked transcription
     sample_30s = audio[:16000 * 30]
     _, detect_info = model.transcribe(sample_30s, beam_size=1, best_of=1)
     detected_lang = detect_info.language
-    detected_prob = detect_info.language_probability
-    logger.info("Pre-detected language: %s (probability: %.2f)", detected_lang, detected_prob)
+    logger.info("Detected language: %s", detected_lang)
 
-    # Step 2: Split audio into chunks
     sr = 16000
-    chunk_len_seconds = 60  # 1-minute chunks
+    chunk_len_seconds = 60
     chunk_samples = chunk_len_seconds * sr
+    chunks = [(audio[off:off + chunk_samples], off / sr) for off in range(0, len(audio), chunk_samples)]
 
-    chunks = []
-    for offset in range(0, len(audio), chunk_samples):
-        chunk_audio = audio[offset : offset + chunk_samples]
-        chunk_start = offset / sr
-        chunks.append((chunk_audio, chunk_start))
-
-    logger.info("Split audio into %d chunks of %ds for parallel transcription", len(chunks), chunk_len_seconds)
-
-    # Step 3: Transcribe chunks in parallel
-    cores = os.cpu_count() or 4
-    max_workers = max(2, min(4, cores // 2))
+    from app.services.device import get_optimal_threads
+    max_workers = get_optimal_threads()
 
     def _transcribe_chunk(args):
         chunk_audio, chunk_start = args
         segs, _ = model.transcribe(
-            chunk_audio,
-            beam_size=1,
-            best_of=1,
-            word_timestamps=True,
-            language=detected_lang,
+            chunk_audio, beam_size=1, best_of=1,
+            word_timestamps=True, language=detected_lang,
         )
-        chunk_results = []
-        for segment in segs:
-            chunk_results.append({
-                "start": round(segment.start + chunk_start, 2),
-                "end": round(segment.end + chunk_start, 2),
-                "text": segment.text.strip(),
-                "words": [
-                    {
-                        "word": w.word,
-                        "start": round(w.start + chunk_start, 2),
-                        "end": round(w.end + chunk_start, 2),
-                        "probability": w.probability,
-                    }
-                    for w in (segment.words or [])
-                ],
-            })
-        return chunk_results
+        return [{
+            "start": round(s.start + chunk_start, 2),
+            "end": round(s.end + chunk_start, 2),
+            "text": s.text.strip(),
+            "words": [{"word": w.word, "start": round(w.start + chunk_start, 2),
+                        "end": round(w.end + chunk_start, 2), "probability": w.probability}
+                      for w in (s.words or [])],
+        } for s in segs]
 
     all_segments = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -346,17 +336,13 @@ def _transcribe_cpu(audio_path: str, model_size: str = "large-v3") -> dict[str, 
         for future in futures:
             all_segments.extend(future.result())
 
-    # Sort by start time to ensure chronological order
     all_segments.sort(key=lambda s: s["start"])
-
     elapsed = time.time() - t0
-    logger.info("Parallel transcription complete in %.2fs: %d segments from %d chunks",
-                elapsed, len(all_segments), len(chunks))
+    logger.info("Parallel CPU transcription done in %.2fs: %d segments", elapsed, len(all_segments))
 
     return {
         "language": detected_lang,
-        "language_probability": detected_prob,
+        "language_probability": detect_info.language_probability,
         "duration": round(total_duration, 2),
         "segments": all_segments,
     }
-
