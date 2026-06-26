@@ -1,8 +1,9 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { memo, useState, useRef, useEffect } from "react"
 import { Download, Copy, Check, Clock, TrendingUp, Hash, Film } from "lucide-react"
 import { formatDuration, cn } from "@/lib/utils"
+import { clipsAPI } from "@/lib/api"
 
 interface Clip {
   id: string
@@ -15,6 +16,7 @@ interface Clip {
   thumbnail_url: string | null
   title: string | null
   hashtags: string | null
+  dubs?: Record<string, string>
   created_at: string
 }
 
@@ -34,17 +36,32 @@ function scoreLabel(score: number): string {
   return "Low"
 }
 
-export function ClipCard({ clip }: ClipCardProps) {
+export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
+  const [localClip, setLocalClip] = useState<Clip>(clip)
+  const [selectedLang, setSelectedLang] = useState<string>("original")
+  const [dubbing, setDubbing] = useState<boolean>(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+
   const [copiedDesc, setCopiedDesc] = useState(false)
   const [copiedTags, setCopiedTags] = useState(false)
   const [videoError, setVideoError] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const dur = clip.end_time - clip.start_time
 
+  useEffect(() => {
+    setLocalClip(clip)
+  }, [clip])
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg)
+    setTimeout(() => setToastMessage(null), 3000)
+  }
+
   const handleCopyDesc = async () => {
     try {
       await navigator.clipboard.writeText(clip.caption)
       setCopiedDesc(true)
+      showToast("Description copied to clipboard!")
       setTimeout(() => setCopiedDesc(false), 2000)
     } catch {}
   }
@@ -55,34 +72,82 @@ export function ClipCard({ clip }: ClipCardProps) {
       const rawTags = clip.hashtags.split(/[\s,]+/).filter(t => t.trim().length > 0).map(t => (t.startsWith("#") ? t : `#${t}`)).join(" ")
       await navigator.clipboard.writeText(rawTags)
       setCopiedTags(true)
+      showToast("Viral tags copied to clipboard!")
       setTimeout(() => setCopiedTags(false), 2000)
     } catch {}
   }
 
+  const videoSrc = selectedLang !== "original" && localClip.dubs?.[selectedLang]
+    ? localClip.dubs[selectedLang]
+    : clip.file_url
+
   const handleDownload = async () => {
+    showToast("Starting clip download...")
     try {
-      const res = await fetch(clip.file_url)
+      const res = await fetch(videoSrc)
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = `clip-${clip.id.slice(0, 8)}.mp4`
+      a.download = `clip-${clip.id.slice(0, 8)}-${selectedLang}.mp4`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      showToast("Download completed!")
     } catch {
-      window.open(clip.file_url, "_blank")
+      window.open(videoSrc, "_blank")
+    }
+  }
+
+  const handleDubClick = async (lang: string) => {
+    setDubbing(true)
+    showToast(`Started dubbing clip to ${lang.toUpperCase()}...`)
+    try {
+      await clipsAPI.dub(clip.id, lang)
+      // Start polling
+      let attempts = 0
+      const maxAttempts = 40 // ~2 minutes
+      const interval = setInterval(async () => {
+        attempts++
+        try {
+          const res = await clipsAPI.get(clip.id)
+          const updatedClip = res.data as Clip
+          if (updatedClip.dubs?.[lang]) {
+            setLocalClip(updatedClip)
+            setDubbing(false)
+            showToast(`Dubbing to ${lang.toUpperCase()} completed successfully!`)
+            clearInterval(interval)
+          } else if (attempts >= maxAttempts) {
+            setDubbing(false)
+            showToast("Dubbing timed out. Please try again.")
+            clearInterval(interval)
+          }
+        } catch {
+          // Keep polling
+        }
+      }, 3000)
+    } catch (err) {
+      setDubbing(false)
+      showToast("Failed to start dubbing. Please try again.")
     }
   }
 
   return (
-    <div className="card group animate-scale-in overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-black/5">
+    <div className="card group relative animate-scale-in overflow-hidden transition-all duration-200 hover:shadow-lg hover:shadow-black/5 border border-slate-800/80 bg-slate-900/40 backdrop-blur-md">
+      {toastMessage && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 animate-fade-in bg-slate-900/90 text-slate-100 text-xs font-semibold px-4 py-2 rounded-full border border-brand-500/30 backdrop-blur-md flex items-center gap-1.5 shadow-lg shadow-black/40">
+          <Check size={14} className="text-emerald-400" />
+          {toastMessage}
+        </div>
+      )}
+
       <div className="relative overflow-hidden bg-slate-900 flex items-center justify-center min-h-[200px]">
-        {clip.file_url && !videoError ? (
+        {videoSrc && !videoError ? (
           <video
+            key={videoSrc}
             ref={videoRef}
-            src={clip.file_url}
+            src={videoSrc}
             poster={clip.thumbnail_url || undefined}
             controls
             preload="metadata"
@@ -114,6 +179,54 @@ export function ClipCard({ clip }: ClipCardProps) {
             {clip.title}
           </p>
         )}
+
+        <div className="flex flex-col gap-2 bg-slate-800/40 p-3 rounded-lg border border-slate-700/50">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Audio Language</span>
+            <select
+              value={selectedLang}
+              onChange={(e) => setSelectedLang(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-md px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-brand-500 cursor-pointer"
+            >
+              <option value="original">Original Language</option>
+              <option value="es">Spanish (ES)</option>
+              <option value="fr">French (FR)</option>
+              <option value="de">German (DE)</option>
+              <option value="pt">Portuguese (PT)</option>
+              <option value="hi">Hindi (HI)</option>
+            </select>
+          </div>
+
+          {selectedLang !== "original" && (
+            <div className="mt-2">
+              {localClip.dubs?.[selectedLang] ? (
+                <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 bg-emerald-950/20 border border-emerald-800/20 px-2 py-1 rounded-md">
+                  <Check size={12} /> Dubbed audio ready! Playing in player.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  <p className="text-[11px] text-slate-400">
+                    Dubbed version for this language has not been generated yet.
+                  </p>
+                  <button
+                    onClick={() => handleDubClick(selectedLang)}
+                    disabled={dubbing}
+                    className="w-full btn-slate py-1.5 text-xs flex items-center justify-center gap-2 border border-slate-700 bg-slate-800/60 hover:bg-slate-700/80 disabled:opacity-50"
+                  >
+                    {dubbing ? (
+                      <>
+                        <div className="h-3 w-3 animate-spin rounded-full border border-slate-400 border-t-transparent" />
+                        Dubbing clip...
+                      </>
+                    ) : (
+                      <>Dub Audio to {selectedLang.toUpperCase()}</>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {clip.caption && (
           <div className="rounded-lg bg-slate-800/40 p-3 border border-slate-700/50">
@@ -178,5 +291,4 @@ export function ClipCard({ clip }: ClipCardProps) {
       </div>
     </div>
   )
-}
-
+})

@@ -19,32 +19,9 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
 def _video_to_response(video: Video) -> VideoResponse:
-    """Convert Video model to VideoResponse with presigned URL and job progress."""
     resp = VideoResponse.model_validate(video)
     try:
         resp.source_url = get_presigned_url(video.source_url)
-    except Exception:
-        pass
-    try:
-        from app.models.job import Job
-        from app.workers.celery_app import SyncSessionLocal
-
-        session = SyncSessionLocal()
-        try:
-            jobs = session.query(Job).filter(Job.video_id == video.id).all()
-            if jobs:
-                overall = 0.0
-                for j in jobs:
-                    p = j.progress or 0.0
-                    if j.type == JobTypeEnum.TRANSCRIPTION:
-                        overall += p * 30.0
-                    elif j.type == JobTypeEnum.HIGHLIGHT:
-                        overall += p * 50.0
-                    elif j.type == JobTypeEnum.RENDER:
-                        overall += p * 20.0
-                resp.progress = min(overall, 99.0)
-        finally:
-            session.close()
     except Exception:
         pass
     if video.segments:
@@ -109,29 +86,12 @@ async def import_video(
 
     preset = get_preset(payload.platform or "youtube_shorts")
 
-    try:
-        file_path = download_from_url(payload.source_url)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to download video: {exc}",
-        )
-
-    duration = None
-    try:
-        duration = get_video_duration(file_path)
-    except Exception:
-        pass
-
-    object_name = f"videos/{current_user.id}/{uuid.uuid4()}.mp4"
-    upload_file(file_path, object_name)
-
     video = Video(
         user_id=current_user.id,
-        source_url=object_name,
+        source_url=payload.source_url,
         status=VideoStatusEnum.UPLOADED,
-        duration=duration,
-        title=Path(file_path).name,
+        duration=None,
+        title="Importing from YouTube...",
         platform=preset.name,
     )
     db.add(video)
@@ -212,11 +172,10 @@ async def reprocess_video(
 
     from app.models.clip import Clip
     
-    has_transcription = bool(video.transcript and video.segments and len(video.segments) > 0)
-    has_highlights = False
-    if has_transcription:
-        scored = [s for s in video.segments if isinstance(s, dict) and "hook_score" in s and "scene_change_intensity" in s]
-        has_highlights = len(scored) >= max(1, len(video.segments) // 2)
+    # Reset video metadata to force complete recalculation
+    video.transcript = None
+    video.segments = None
+    video.language = None
 
     await db.execute(delete(Clip).where(Clip.video_id == video_id))
     await db.execute(delete(Job).where(Job.video_id == video_id))
@@ -226,14 +185,14 @@ async def reprocess_video(
     job1 = Job(
         video_id=video.id, 
         type=JobTypeEnum.TRANSCRIPTION, 
-        status=JobStatusEnum.DONE if has_transcription else JobStatusEnum.QUEUED,
-        progress=1.0 if has_transcription else 0.0
+        status=JobStatusEnum.QUEUED,
+        progress=0.0
     )
     job2 = Job(
         video_id=video.id, 
         type=JobTypeEnum.HIGHLIGHT, 
-        status=JobStatusEnum.DONE if has_highlights else JobStatusEnum.QUEUED,
-        progress=1.0 if has_highlights else 0.0
+        status=JobStatusEnum.QUEUED,
+        progress=0.0
     )
     job3 = Job(
         video_id=video.id, 
@@ -274,3 +233,29 @@ async def delete_video(
     from app.services.storage import delete_prefix
     delete_file(video.source_url)
     delete_prefix(f"clips/{video_id}/")
+
+
+from pydantic import BaseModel
+
+class VideoDubRequest(BaseModel):
+    target_langs: list[str] | None = None
+
+
+@router.post("/{video_id}/dub", response_model=VideoResponse)
+async def dub_video(
+    video_id: uuid.UUID,
+    payload: VideoDubRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Video).where(Video.id == video_id, Video.user_id == current_user.id)
+    )
+    video = result.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    from app.workers.dubbing import run_dub_video
+    run_dub_video.delay(str(video_id), payload.target_langs)
+
+    return _video_to_response(video)

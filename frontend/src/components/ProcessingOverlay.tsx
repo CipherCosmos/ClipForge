@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { memo, useState } from "react"
 import { Film, Loader2, Sparkles, CheckCircle2, AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -20,7 +20,7 @@ function stageLabel(progress: number): string {
   return "Complete!"
 }
 
-export function ProcessingOverlay({
+export const ProcessingOverlay = memo(function ProcessingOverlay({
   videoUrl,
   progress,
   message,
@@ -120,4 +120,4 @@ export function ProcessingOverlay({
       </div>
     </div>
   )
-}
+})

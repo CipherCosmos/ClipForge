@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useDispatch, useSelector } from "react-redux"
+import { useDispatch, useSelector, shallowEqual } from "react-redux"
 import { AppDispatch, RootState } from "@/store/store"
 import { fetchVideo, updateVideo } from "@/store/videoSlice"
 import { fetchClips as fetchClipsThunk, Clip } from "@/store/clipSlice"
@@ -29,35 +29,44 @@ export default function VideoDetailPage() {
   const params = useParams()
   const router = useRouter()
   const dispatch = useDispatch<AppDispatch>()
-  const { currentVideo: video, loading: videoLoading } = useSelector((s: RootState) => s.videos)
-  const { clips, loading: clipsLoading } = useSelector((s: RootState) => s.clips)
+  const { currentVideo: video, loading: videoLoading } = useSelector((s: RootState) => ({
+    currentVideo: s.videos.currentVideo,
+    loading: s.videos.loading,
+  }), shallowEqual)
+  const { clips, loading: clipsLoading } = useSelector((s: RootState) => ({
+    clips: s.clips.clips,
+    loading: s.clips.loading,
+  }), shallowEqual)
   const [sortKey, setSortKey] = useState<SortKey>("score")
   const id = params.id as string
 
-  // Live progress tracking (WebSocket + polling fallback)
   const isProcessing = video?.status === "uploaded" || video?.status === "processing"
   const { state: progressState, completed, error: progressError } = useVideoProgress(
     isProcessing ? id : null
   )
 
+  // Stable dispatch — fetch only once per id
+  const fetchedRef = useRef<string | null>(null)
   useEffect(() => {
     if (!id) return
+    if (fetchedRef.current === id) return
+    fetchedRef.current = id
     dispatch(fetchVideo(id))
     dispatch(fetchClipsThunk(id))
   }, [id, dispatch])
 
-  // Refresh clips when processing completes
+  // Refresh when processing completes
   useEffect(() => {
     if (completed) {
-      dispatch(fetchVideo(id))
-      dispatch(fetchClipsThunk(id))
+      dispatch(fetchVideo({ id, force: true }))
+      dispatch(fetchClipsThunk({ video_id: id, force: true }))
     }
   }, [completed, id, dispatch])
 
   const handleRefresh = useCallback(() => {
     if (id) {
-      dispatch(fetchVideo(id))
-      dispatch(fetchClipsThunk(id))
+      dispatch(fetchVideo({ id, force: true }))
+      dispatch(fetchClipsThunk({ video_id: id, force: true }))
     }
   }, [id, dispatch])
 
@@ -68,7 +77,7 @@ export default function VideoDetailPage() {
     try {
       const { videosAPI } = await import("@/lib/api")
       await videosAPI.reprocess(id)
-      window.location.reload() // Quickest way to reset all hook states
+      window.location.reload()
     } catch (err) {
       alert("Failed to reprocess video")
     } finally {
@@ -76,13 +85,13 @@ export default function VideoDetailPage() {
     }
   }
 
-  const sortedClips = [...clips].sort((a: Clip, b: Clip) => {
+  const sortedClips = useMemo(() => [...clips].sort((a: Clip, b: Clip) => {
     if (sortKey === "score") return b.score - a.score
     if (sortKey === "duration") {
       return (b.end_time - b.start_time) - (a.end_time - a.start_time)
     }
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  })
+  }), [clips, sortKey])
 
   if (videoLoading && !video) return <DetailSkeleton />
 

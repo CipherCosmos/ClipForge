@@ -1,7 +1,10 @@
 "use client"
 
 import { useEffect, useRef, useState, useCallback } from "react"
-import { videosAPI } from "@/lib/api"
+import { useDispatch, useSelector } from "react-redux"
+import type { AppDispatch, RootState } from "@/store/store"
+import { fetchVideo } from "@/store/videoSlice"
+import { fetchClips as fetchClipsThunk } from "@/store/clipSlice"
 
 export interface ProgressEvent {
   type: "progress"
@@ -51,6 +54,7 @@ function computeOverall(progressMap: Record<string, number>): number {
 }
 
 export function useVideoProgress(videoId: string | null) {
+  const dispatch = useDispatch<AppDispatch>()
   const [state, setState] = useState<VideoProgressState>({
     status: "pending",
     progress: 0,
@@ -78,11 +82,13 @@ export function useVideoProgress(videoId: string | null) {
   const updateFromApi = useCallback(async () => {
     if (!videoId) return
     try {
-      const res = await videosAPI.get(videoId)
-      const v = res.data
+      const result = await dispatch(fetchVideo({ id: videoId, force: true }))
+      const v = result.payload as any
+      if (!v || !v.status) return
       if (v.status === "completed" || v.status === "ready") {
         setCompleted(true)
         setState({ status: "completed", progress: 100, message: "Complete!", jobType: "" })
+        dispatch(fetchClipsThunk({ video_id: videoId, force: true }))
         cleanup()
         return
       }
@@ -102,7 +108,7 @@ export function useVideoProgress(videoId: string | null) {
     } catch {
       // ignore polling errors
     }
-  }, [videoId, cleanup])
+  }, [videoId, cleanup, dispatch])
 
   useEffect(() => {
     mountedRef.current = true
@@ -117,9 +123,9 @@ export function useVideoProgress(videoId: string | null) {
     setCompleted(false)
     setError("")
 
-    // Try WebSocket
+    // Try WebSocket — use current host (works in dev and prod)
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const host = "localhost:8000"
+    const host = window.location.host
     const wsUrl = `${protocol}//${host}/ws/progress/${videoId}?token=${token}`
 
     let wsConnected = false
@@ -184,7 +190,7 @@ export function useVideoProgress(videoId: string | null) {
     function startPolling() {
       if (pollRef.current || !mountedRef.current) return
       updateFromApi()
-      pollRef.current = setInterval(updateFromApi, 2000)
+      pollRef.current = setInterval(updateFromApi, 5000)
     }
 
     // If WS didn't connect within 2s, start polling
