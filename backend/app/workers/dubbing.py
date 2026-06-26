@@ -11,10 +11,10 @@ import uuid
 
 import httpx
 
-from app.config import settings
 from app.models import Clip, Video
-from app.services.storage import ensure_bucket, upload_file, get_presigned_url
+from app.services.storage import ensure_bucket, get_presigned_url, upload_file
 from app.services.translation import SUPPORTED_LANGUAGES, translate_text
+from app.services.video import get_media_duration
 from app.services.tts import generate_speech
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
@@ -56,20 +56,10 @@ def dub_clip(
             return False
 
         # Step 3: Get duration of generated speech
-        duration_result = subprocess.run([
-            "ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of",
-            "default=noprint_wrappers=1:nokey=1", speech_path,
-        ], capture_output=True, text=True, timeout=15)
-        speech_duration = float(duration_result.stdout.strip() or "3.0")
+        speech_duration = get_media_duration(speech_path, default=3.0)
 
         # Step 4: Get duration of original clip
-        original_duration_result = subprocess.run([
-            "ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of",
-            "default=noprint_wrappers=1:nokey=1", input_video,
-        ], capture_output=True, text=True, timeout=15)
-        original_duration = float(original_duration_result.stdout.strip() or "5.0")
+        original_duration = get_media_duration(input_video, default=5.0)
 
         # Step 5: Speed up/slow down speech to match original clip duration
         tempo = original_duration / max(speech_duration, 1.0)
@@ -177,6 +167,14 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
             clip_id, target_lang, dubbed_url,
         )
 
+        from app.services.webhooks import fire_event_sync
+        fire_event_sync(str(clip.video_id), "dub.completed", {
+            "status": "completed",
+            "clip_id": clip_id,
+            "target_language": target_lang,
+            "dubbed_url": dubbed_url,
+        })
+
         return {
             "clip_id": clip_id,
             "target_lang": target_lang,
@@ -189,7 +187,7 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
     finally:
         session.close()
         if tmp_dir and os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)

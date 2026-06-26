@@ -1,7 +1,8 @@
-from io import BytesIO
-from typing import Optional, List
 import logging
 from datetime import timedelta
+from io import BytesIO
+from typing import List, Optional
+
 import httpx
 from cachetools import TTLCache
 from minio import Minio
@@ -152,8 +153,6 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
                 _presigned_cache[object_name] = url
                 return url
             if attempt < 2 and resp.status_code in (404, 429):
-                import time
-                time.sleep(0.5 * (attempt + 1))
                 continue
             break
         logger.warning("Failed to sign URL on Supabase: %s", resp.text)

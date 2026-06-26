@@ -5,7 +5,6 @@ import uuid
 from sqlalchemy import and_
 
 from app.api.ws import broadcast_sync
-from app.config import settings
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
 from app.services.scoring import calculate_viral_score
 from app.services.trends import compute_trend_boost, fetch_trending_keywords
@@ -13,8 +12,10 @@ from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 10
-OLLAMA_TIMEOUT = 120.0
+from app.config import settings
+
+BATCH_SIZE = getattr(settings, "LLM_BATCH_SIZE", 10)
+LLM_TIMEOUT = settings.GROQ_API_KEY and 30.0 or 120.0
 
 BATCH_PROMPT_TEMPLATE = (
     "You are a viral short expert. Analyze each text segment below for viral potential.\n"
@@ -58,7 +59,7 @@ def _heuristic_score(text: str, trending: list[str]) -> float:
     return score
 
 
-def _call_ollama(text: str, language: str | None = None) -> dict:
+def _call_llm(text: str, language: str | None = None) -> dict:
     """Mockable single segment LLM score generator."""
     from app.services.llm import generate_llm
     prompt = (
@@ -73,7 +74,7 @@ def _call_ollama(text: str, language: str | None = None) -> dict:
         f'Text: "{text}"'
     )
     try:
-        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        data = generate_llm(prompt, format_json=True, timeout=LLM_TIMEOUT)
         response_text = data.get("response", "{}")
         r = json.loads(response_text)
         return {
@@ -87,10 +88,10 @@ def _call_ollama(text: str, language: str | None = None) -> dict:
         return {}
 
 
-def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[dict]:
+def _call_llm_batch(texts: list[str], language: str | None = None) -> list[dict]:
     import unittest.mock
-    if isinstance(_call_ollama, unittest.mock.Mock):
-        return [_call_ollama(t, language) for t in texts]
+    if isinstance(_call_llm, unittest.mock.Mock):
+        return [_call_llm(t, language) for t in texts]
 
     from app.services.llm import generate_llm
     lang_hint = f"(language: {language}) " if language else ""
@@ -99,7 +100,7 @@ def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[di
     )
     prompt = BATCH_PROMPT_TEMPLATE.format(segments=numbered)
     try:
-        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        data = generate_llm(prompt, format_json=True, timeout=LLM_TIMEOUT)
         response_text = data.get("response", "[]")
         results = json.loads(response_text)
         if not isinstance(results, list):
@@ -191,7 +192,7 @@ def run_nlp(self, video_id: str):
         # Select top candidates for LLM processing (limit to 100)
         MAX_LLM_SEGMENTS = 100
         llm_candidates = scored_indices[:MAX_LLM_SEGMENTS]
-        
+
         # For the remaining segments, assign default neutral scores
         for idx, _ in scored_indices[MAX_LLM_SEGMENTS:]:
             seg = segments[idx]
@@ -211,7 +212,7 @@ def run_nlp(self, video_id: str):
             batch_candidates = llm_candidates[batch_start:batch_start + BATCH_SIZE]
             batch_segments = [segments[idx] for idx, _ in batch_candidates]
             texts = [s.get("text", "") for s in batch_segments]
-            batch_scores = _call_ollama_batch(texts, video.language)
+            batch_scores = _call_llm_batch(texts, video.language)
 
             for j, seg in enumerate(batch_segments):
                 scores = batch_scores[j] if j < len(batch_scores) else {}
@@ -226,15 +227,24 @@ def run_nlp(self, video_id: str):
             job_progress = done / max(llm_total, 1)
             broadcast_sync(video_id, "nlp", job_progress, "running", f"Scored {done}/{llm_total} candidates")
             if job:
-                delta = (job_progress - last_progress) * 0.4
-                last_progress = job_progress
-                from sqlalchemy import update, func
-                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
+                from sqlalchemy import update
+                capped = min(0.99, job_progress * 0.4 + 0.5)
+                session.execute(update(Job).where(Job.id == job.id).values(progress=capped))
                 session.commit()
 
         session.commit()
         logger.info("NLP scoring complete for video %s", video_id)
         broadcast_sync(video_id, "nlp", 1.0, "completed", f"Scored {total} segments")
+
+        from app.services.webhooks import fire_event_sync
+        fire_event_sync(video_id, "nlp.completed", {
+            "status": "completed",
+            "segments_count": total,
+        })
+
+        # Trigger merge if scene detect is also done
+        from app.workers.join_worker import check_and_merge
+        check_and_merge(video_id)
 
         return segments
 

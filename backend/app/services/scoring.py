@@ -1,5 +1,6 @@
 """Shared viral score calculation — single source of truth."""
 import logging
+
 logger = logging.getLogger(__name__)
 
 def calculate_viral_score(seg: dict) -> float:

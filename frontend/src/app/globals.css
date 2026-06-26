@@ -4,52 +4,52 @@
 
 @layer base {
   body {
-    @apply bg-surface text-slate-100 antialiased;
+    @apply bg-white text-slate-900 antialiased dark:bg-surface dark:text-slate-100 transition-colors duration-200;
   }
 }
 
 @layer components {
   .glass {
-    @apply bg-slate-800/60 backdrop-blur-xl border border-slate-700/50;
+    @apply bg-white/60 backdrop-blur-xl border border-slate-200/50 dark:bg-slate-800/60 dark:border-slate-700/50;
   }
   .card {
-    @apply rounded-xl border border-slate-700/50 bg-slate-800/40 transition-all duration-200;
+    @apply rounded-xl border border-slate-200/50 bg-white/40 transition-all duration-200 dark:border-slate-700/50 dark:bg-slate-800/40;
   }
   .card-hover {
-    @apply card hover:border-slate-600/50 hover:bg-slate-800/60 hover:shadow-lg hover:shadow-black/10;
+    @apply card hover:border-slate-300/50 hover:bg-slate-50/60 hover:shadow-lg hover:shadow-black/5 dark:hover:border-slate-600/50 dark:hover:bg-slate-800/60 dark:hover:shadow-black/10;
   }
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-brand-600 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 bg-slate-800/50 px-4 py-2.5 text-sm font-medium text-slate-200 transition-all duration-200 hover:bg-slate-700/50 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white/50 px-4 py-2.5 text-sm font-medium text-slate-700 transition-all duration-200 hover:bg-slate-100 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed dark:border-slate-600 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-700/50;
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-slate-800 hover:text-slate-200;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition-all duration-200 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-2.5 text-sm text-slate-100 outline-none transition-all duration-200 placeholder:text-slate-500 focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30;
+    @apply w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none transition-all duration-200 placeholder:text-slate-400 focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-100 dark:placeholder:text-slate-500;
   }
   .badge {
     @apply inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium;
   }
   .badge-green {
-    @apply badge bg-emerald-900/40 text-emerald-400 border border-emerald-700/30;
+    @apply badge bg-emerald-100 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-400 dark:border-emerald-700/30;
   }
   .badge-yellow {
-    @apply badge bg-amber-900/40 text-amber-400 border border-amber-700/30;
+    @apply badge bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-900/40 dark:text-amber-400 dark:border-amber-700/30;
   }
   .badge-red {
-    @apply badge bg-red-900/40 text-red-400 border border-red-700/30;
+    @apply badge bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/40 dark:text-red-400 dark:border-red-700/30;
   }
   .badge-blue {
-    @apply badge bg-brand-900/40 text-brand-400 border border-brand-700/30;
+    @apply badge bg-brand-100 text-brand-700 border border-brand-200 dark:bg-brand-900/40 dark:text-brand-400 dark:border-brand-700/30;
   }
   .badge-slate {
-    @apply badge bg-slate-800 text-slate-300 border border-slate-700;
+    @apply badge bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700;
   }
   .skeleton {
-    @apply animate-pulse rounded-md bg-slate-800;
+    @apply animate-pulse rounded-md bg-slate-200 dark:bg-slate-800;
   }
 }
 
@@ -60,10 +60,16 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #94a3b8;
   border-radius: 3px;
 }
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
 ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
 

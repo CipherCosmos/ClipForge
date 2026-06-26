@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Upload, Link2, Sparkles, ArrowRight, Github, Film, Globe, Zap, Cpu, Rocket } from "lucide-react"
+import { Upload, Link2, Sparkles, ArrowRight, Globe, Zap, Cpu, Rocket } from "lucide-react"
 
 const FEATURES = [
   { icon: Globe, label: "99+ Languages", desc: "Whisper large-v3-turbo ASR" },

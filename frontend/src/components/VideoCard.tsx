@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { Film, Clock, TrendingUp, Trash2 } from "lucide-react"
+import { Film, Clock, TrendingUp, Trash2, CheckSquare, Square } from "lucide-react"
 import { cn, formatDuration, formatDate, formatScore, statusLabel, statusColor } from "@/lib/utils"
 import { useState } from "react"
 import { videosAPI } from "@/lib/api"
@@ -22,9 +22,11 @@ interface Video {
 interface VideoCardProps {
   video: Video
   onDelete?: (id: string) => void
+  selected?: boolean
+  onSelectChange?: (selected: boolean) => void
 }
 
-export function VideoCard({ video, onDelete }: VideoCardProps) {
+export function VideoCard({ video, onDelete, selected, onSelectChange }: VideoCardProps) {
   const router = useRouter()
   const [deleting, setDeleting] = useState(false)
   const [imgError, setImgError] = useState(false)
@@ -37,10 +39,15 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
       await videosAPI.delete(video.id)
       onDelete?.(video.id)
     } catch {
-      // error handled silently
+      alert("Failed to delete video. Please try again.")
     } finally {
       setDeleting(false)
     }
+  }
+
+  const handleSelectClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onSelectChange?.(!selected)
   }
 
   const thumbnailUrl = video.thumbnail_url
@@ -54,7 +61,21 @@ export function VideoCard({ video, onDelete }: VideoCardProps) {
       )}
     >
       <div className="relative aspect-video overflow-hidden bg-slate-900">
+        {onSelectChange && (
+          <button
+            onClick={handleSelectClick}
+            className="absolute top-2 left-2 z-10 p-1 rounded-md bg-black/50 hover:bg-black/70 transition-colors"
+            title={selected ? "Deselect" : "Select"}
+          >
+            {selected ? (
+              <CheckSquare size={18} className="text-brand-400" />
+            ) : (
+              <Square size={18} className="text-slate-400" />
+            )}
+          </button>
+        )}
         {thumbnailUrl && !imgError ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={thumbnailUrl}
             alt={"Thumbnail for " + (video.title || "video")}

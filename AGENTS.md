@@ -173,13 +173,14 @@ Each step enqueues a Celery task. Services update `job.status` in PostgreSQL. Fr
 
 ## Development
 
-- Start everything: `docker compose up -d` (API, Postgres, Redis, MinIO, Ollama, Celery worker)
-- `docker compose up api -d` for just the API during frontend work
-- Seed test user: `python scripts/seed.py`
-- Run lint → typecheck → test before pushing (ruff, mypy, pytest)
-- CI: GitHub Actions (free tier) — lint, test, build Docker images
-- Monitoring: Prometheus + Grafana (optional, added when needed)
-- Ollama models pulled on first start via `docker compose exec ollama ollama pull llama3`
+- Start everything: `docker compose up -d` (Postgres, Redis, MinIO only — app services run natively)
+- Start API: `cd backend && source .venv/bin/activate && uvicorn app.main:app --reload --port 8000`
+- Start Celery: `cd backend && source .venv/bin/activate && celery -A app.workers.celery_app worker --loglevel=info`
+- Start Frontend: `cd frontend && npm run dev`
+- Seed test user: `cd backend && source .venv/bin/activate && python scripts/seed.py`
+- Run lint → test before pushing (ruff, pytest)
+- Run migrations: `cd backend && source .venv/bin/activate && alembic upgrade head`
+- **Warning**: docker-compose.yml has no `api` or `ollama` services — Makefile targets referencing them (`seed`, `pull-models`, `migrate*`) are broken
 
 ## Test Commands
 ```bash
@@ -192,6 +193,42 @@ python -m pytest tests/test_pipeline.py -v
 # Run E2E CLI workflow
 python scripts/e2e_test.py
 
-# Lint
+# Lint (ruff only — no mypy CI yet)
 ruff check app/ tests/ scripts/
 ```
+
+## Known Issues (Post-Consolidation Audit)
+
+### Fixed (Session 2026-06-26)
+- **Missing `User` import** in `render.py:994` — would crash at runtime
+- **4 tables + 4 columns missing from Alembic migration** — `refresh_tokens`, `subscriptions`, `schedules`, `webhooks` + email verification/reset columns
+- **`numpy` missing from requirements.txt** — used by `emotion.py` and `render.py`
+- **7× duplicated ffprobe duration detection** → consolidated to single `get_media_duration()` in `video.py`
+- **Unauthenticated webhook endpoints** in `publish.py:73-87` — added `Depends(get_current_user)`
+- **Dead code removed**: `cleanup.py`, `dependencies.py`, 8 unused exception subclasses, `ProcessingPipeline.tsx`
+- **Batch export button** was router.push loop → fixed to single navigation
+- **WebSocket URL** was pointing to `localhost:3000` → now derives from `NEXT_PUBLIC_API_URL`
+- **Invalid Tailwind classes** (`border-slate-850`, `scrollbar-thin`, `btn-slate`) → fixed
+- **`generate_llm_async`** now delegates to sync via `asyncio.to_thread()` — 55 lines eliminated
+- **`_get_top_segments()`** 140-line over-engineering → collapsed to 50 lines with helper functions
+- **6 Makefile targets** (`seed`, `pull-models`, `migrate*`) → fixed for native dev workflow
+- **`useKeyboardShortcuts.ts` renamed to `.tsx`** — pre-existing parse error fixed
+- **`Schedule.access_token`** now encrypted via Fernet before DB storage; decrypted on use
+- **CI pipeline** created at `.github/workflows/ci.yml` (lint + test on PostgreSQL)
+- **`list_webhooks` endpoint** added to `publish.py` — API completeness
+- **`_argos_initialized`** now thread-safe with `threading.Lock` in `translation.py`
+- **`pytest in sys.modules` hack removed** from `translation.py` — no more fragile test detection
+- **`DEVICE` variable** now passed to SenseVoice model loader in `emotion.py`
+- **ORM relationships added** to `RefreshToken` + `Subscription` models — consistent with other models
+- **`decode_access_token`/`decode_token` duplicate** consolidated in `security.py`
+- **Translation result caching removed** — eliminates test interference from `lru_cache`
+- **Dead Redux actions removed**: `setVideos`, `setCurrentVideo`, `addVideo`, `updateVideo`, `setLoading` from `videoSlice.ts`; `setClips`, `setLoading` from `clipSlice.ts`
+- **Dead frontend exports removed**: `billingAPI`, `jobsAPI` from `api.ts`; `CardSkeleton` export from `LoadingSkeleton.tsx`
+- **Unused imports cleaned**: `Video` type in dashboard, `useSelector`/`RootState` in billing page, stub `useEffect` in transcript editor
+- **142/142 tests passing**
+
+### Still Remaining (Stubs / Non-Blocking)
+- `detect_music_segments()` always returns full audio as one segment (needs real ML model)
+- SenseVoice emotion confidences hardcoded to 0.8 (needs real inference)
+- Backing tracks are sine waves, not real music (needs real audio library)
+- Intermittent `RuntimeWarning: coroutine 'Connection._cancel' was never awaited` (preexisting)

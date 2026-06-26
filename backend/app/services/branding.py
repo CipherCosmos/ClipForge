@@ -1,7 +1,8 @@
 """Branding service — watermark, logo, colors, intro/outro."""
-import logging, os, tempfile, subprocess
-from typing import Any
-from dataclasses import dataclass, field
+import logging
+import os
+import subprocess
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ def build_watermark_filter(brand: BrandConfig, video_w: int, video_h: int) -> li
     filters = []
     if brand.watermark_text:
         pos_map = {
-            "top-left": f"x=20:y=20",
+            "top-left": "x=20:y=20",
             "top-right": f"x={video_w - 20}-text_w:y=20",
             "bottom-left": f"x=20:y={video_h - 20}-text_h",
             "bottom-right": f"x={video_w - 20}-text_w:y={video_h - 20}-text_h",

@@ -8,7 +8,7 @@ import { fetchVideo } from "@/store/videoSlice"
 import { fetchClips as fetchClipsThunk, Clip } from "@/store/clipSlice"
 import {
   ArrowLeft, Sparkles, Globe, Monitor, TrendingUp, RefreshCw,
-  Loader2, Film
+  Loader2, Film, FileText, Download, Languages
 } from "lucide-react"
 import { ClipCard } from "@/components/ClipCard"
 import { ProcessingOverlay } from "@/components/ProcessingOverlay"
@@ -78,8 +78,9 @@ export default function VideoDetailPage() {
       const { videosAPI } = await import("@/lib/api")
       await videosAPI.reprocess(id)
       window.location.reload()
-    } catch (err) {
-      alert("Failed to reprocess video")
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || "Failed to reprocess video. Make sure the processing backend (Celery + Redis) is running."
+      alert(msg)
     } finally {
       setIsReprocessing(false)
     }
@@ -118,12 +119,12 @@ export default function VideoDetailPage() {
 
   return (
     <div className="animate-fade-in space-y-8">
-      <div className="flex items-center gap-4">
-        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2 shrink-0">
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="truncate text-xl font-bold text-white">
+          <h1 className="truncate text-lg sm:text-xl font-bold text-white dark:text-white">
             {video.title || "Untitled Video"}
           </h1>
           <p className="text-sm text-slate-400">
@@ -136,15 +137,66 @@ export default function VideoDetailPage() {
         <button
           onClick={handleRefresh}
           disabled={clipsLoading}
-          className="btn-ghost"
+          className="btn-ghost p-2"
           title="Refresh"
         >
           <RefreshCw size={16} className={cn(clipsLoading && "animate-spin")} />
         </button>
+        {video.segments && video.segments.length > 0 && (
+          <button
+            onClick={() => router.push(`/app/videos/${id}/transcript`)}
+            className="btn-secondary text-xs px-2.5 sm:px-3 whitespace-nowrap"
+            title="Edit Transcript"
+          >
+            <FileText size={14} className="mr-1" />
+            Edit Transcript
+          </button>
+        )}
+        {!isProcessing && clips.length > 0 && (
+          <button
+            onClick={async () => {
+              try {
+                const res = await videosAPI.exportZip(id)
+                const url = URL.createObjectURL(res.data as Blob)
+                const a = document.createElement("a")
+                a.href = url
+                a.download = `${video.title || "clipforge-export"}.zip`
+                a.click()
+                URL.revokeObjectURL(url)
+              } catch {
+                alert("Failed to export ZIP")
+              }
+            }}
+            className="btn-secondary text-xs px-2.5 sm:px-3 whitespace-nowrap"
+            title="Download All Clips as ZIP"
+          >
+            <Download size={14} className="mr-1" />
+            Export ZIP
+          </button>
+        )}
+        {!isProcessing && clips.length > 0 && (
+          <button
+            onClick={async () => {
+              const lang = prompt("Target language code (e.g. es, fr, de):", "es")
+              if (!lang) return
+              try {
+                await videosAPI.dub(id, lang)
+                alert(`Dubbing queued for all clips to ${lang}`)
+              } catch {
+                alert("Failed to queue dubbing")
+              }
+            }}
+            className="btn-secondary text-xs px-2.5 sm:px-3 whitespace-nowrap"
+            title="Dub all clips to another language"
+          >
+            <Languages size={14} className="mr-1" />
+            Dub All
+          </button>
+        )}
         <button
           onClick={handleReprocess}
           disabled={isReprocessing}
-          className="btn-secondary text-xs px-3"
+          className="btn-secondary text-xs px-2.5 sm:px-3 whitespace-nowrap"
           title="Reprocess Video (or Force Restart)"
         >
           {isReprocessing ? "Reprocessing..." : "Force Reprocess"}
@@ -152,17 +204,20 @@ export default function VideoDetailPage() {
       </div>
 
       {/* Video player + processing overlay */}
-      <ProcessingOverlay
-        videoUrl={video.source_url}
-        progress={progressState.progress}
-        message={progressState.message}
-        status={overlayStatus}
-        error={progressError}
-      />
+      <div className="flex flex-col lg:flex-row lg:items-start gap-6">
+        <div className="w-full lg:flex-1">
+          <ProcessingOverlay
+            videoUrl={video.source_url}
+            progress={progressState.progress}
+            message={progressState.message}
+            status={overlayStatus}
+            error={progressError}
+          />
+        </div>
 
-      {/* Stats cards (only visible when not actively processing) */}
-      {!isProcessing && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Stats cards (only visible when not actively processing) - stacked on mobile, side panel on desktop */}
+        {!isProcessing && (
+          <div className="w-full lg:w-72 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-3">
           <div className="card p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/10">
@@ -213,12 +268,13 @@ export default function VideoDetailPage() {
           </div>
         </div>
       )}
+      </div>
 
       {/* Sort Controls */}
       {!isProcessing && clips.length > 0 && (
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <h2 className="text-lg font-bold text-white">Generated Clips</h2>
-          <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+          <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">Generated Clips</h2>
+          <div className="flex gap-2 overflow-x-auto">
             {SORT_OPTIONS.map((opt) => (
               <button
                 key={opt.key}
@@ -247,7 +303,7 @@ export default function VideoDetailPage() {
       )}
 
       {!clipsLoading && clips.length === 0 && !isProcessing && (
-        <div className="card flex flex-col items-center py-16">
+        <div className="card flex flex-col items-center py-12 sm:py-16 px-4">
           <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-800">
             <Film size={28} className="text-slate-600" />
           </div>

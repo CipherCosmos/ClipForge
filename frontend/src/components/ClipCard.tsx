@@ -1,9 +1,9 @@
 "use client"
 
 import { memo, useState, useRef, useEffect } from "react"
-import { Download, Copy, Check, Clock, TrendingUp, Hash, Film, Globe } from "lucide-react"
+import { Download, Copy, Check, Clock, TrendingUp, Hash, Film, Globe, Calendar } from "lucide-react"
 import { formatDuration, cn } from "@/lib/utils"
-import { clipsAPI } from "@/lib/api"
+import { clipsAPI, scheduleAPI } from "@/lib/api"
 
 interface Clip {
   id: string
@@ -45,6 +45,16 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
   const [publishError, setPublishError] = useState("")
   const [publishSuccess, setPublishSuccess] = useState(false)
   const [publishForm, setPublishForm] = useState<{platform: string; token: string; title: string; description: string} | null>(null)
+  const [scheduleForm, setScheduleForm] = useState<boolean>(false)
+  const [schedulePlatform, setSchedulePlatform] = useState<string>("youtube_shorts")
+  const [scheduleToken, setScheduleToken] = useState<string>("")
+  const [scheduleTitle, setScheduleTitle] = useState<string>(clip.title || "")
+  const [scheduleDesc, setScheduleDesc] = useState<string>(clip.caption || "")
+  const [scheduleTags, setScheduleTags] = useState<string>(clip.hashtags || "")
+  const [scheduleAt, setScheduleAt] = useState<string>("")
+  const [scheduling, setScheduling] = useState<boolean>(false)
+  const [scheduleError, setScheduleError] = useState("")
+  const [scheduleSuccess, setScheduleSuccess] = useState(false)
 
   const [copiedDesc, setCopiedDesc] = useState(false)
   const [copiedTags, setCopiedTags] = useState(false)
@@ -107,6 +117,36 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
       setPublishError(err.response?.data?.detail || err.message || "Publish failed")
     } finally {
       setPublishing(null)
+    }
+  }
+
+  const submitSchedule = async () => {
+    if (!scheduleAt) {
+      setScheduleError("Please select a date and time")
+      return
+    }
+    setScheduling(true)
+    setScheduleError("")
+    setScheduleSuccess(false)
+    try {
+      const res = await scheduleAPI.create({
+        clip_id: clip.id,
+        platform: schedulePlatform,
+        title: scheduleTitle || clip.title || "",
+        description: scheduleDesc || clip.caption || "",
+        hashtags: scheduleTags || clip.hashtags || "",
+        access_token: scheduleToken,
+        scheduled_at: new Date(scheduleAt).toISOString(),
+      })
+      if (res.data) {
+        setScheduleSuccess(true)
+        setScheduleForm(false)
+        setTimeout(() => setScheduleSuccess(false), 5000)
+      }
+    } catch (err: any) {
+      setScheduleError(err.response?.data?.detail || err.message || "Schedule failed")
+    } finally {
+      setScheduling(false)
     }
   }
 
@@ -240,7 +280,7 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
                   <button
                     onClick={() => handleDubClick(selectedLang)}
                     disabled={dubbing}
-                    className="w-full btn-slate py-1.5 text-xs flex items-center justify-center gap-2 border border-slate-700 bg-slate-800/60 hover:bg-slate-700/80 disabled:opacity-50"
+                    className="w-full btn-ghost py-1.5 text-xs flex items-center justify-center gap-2 border border-slate-700 bg-slate-800/60 hover:bg-slate-700/80 disabled:opacity-50"
                   >
                     {dubbing ? (
                       <>
@@ -318,13 +358,17 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Publish To</span>
             </div>
             <div className="flex gap-2">
-              {["youtube_shorts", "tiktok", "instagram_reels"].map((platform) => (
+              {["youtube_shorts", "tiktok", "instagram_reels", "linkedin"].map((platform) => (
                 <button key={platform} onClick={() => openPublishForm(platform)} disabled={!!publishForm}
-                  className="flex-1 btn-slate py-1.5 text-xs flex items-center justify-center gap-1.5">
-                  {platform === "youtube_shorts" ? "YouTube" : platform === "tiktok" ? "TikTok" : "Instagram"}
+                  className="flex-1 btn-ghost py-1.5 text-xs flex items-center justify-center gap-1.5">
+                  {platform === "youtube_shorts" ? "YouTube" : platform === "tiktok" ? "TikTok" : platform === "instagram_reels" ? "Instagram" : "LinkedIn"}
                 </button>
               ))}
             </div>
+            <button onClick={() => setScheduleForm(true)} disabled={!!publishForm}
+              className="w-full btn-ghost py-1.5 text-xs flex items-center justify-center gap-1.5 mt-1">
+              <Calendar size={14} /> Schedule
+            </button>
             
             {/* Publish form popup */}
             {publishForm && (
@@ -335,7 +379,7 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
                 <input value={publishForm.title} onChange={e => setPublishForm({...publishForm, title: e.target.value})}
                   placeholder="Title" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
                 <div className="flex gap-2">
-                  <button onClick={() => setPublishForm(null)} className="flex-1 btn-slate py-1 text-xs">Cancel</button>
+                  <button onClick={() => setPublishForm(null)} className="flex-1 btn-ghost py-1 text-xs">Cancel</button>
                   <button onClick={submitPublish} disabled={!publishForm.token || publishing === publishForm.platform}
                     className="flex-1 btn-primary py-1 text-xs">
                     {publishing === publishForm.platform ? "Publishing..." : "Publish"}
@@ -344,8 +388,41 @@ export const ClipCard = memo(function ClipCard({ clip }: ClipCardProps) {
               </div>
             )}
             
+            {/* Schedule form popup */}
+            {scheduleForm && (
+              <div className="rounded-lg border border-slate-700 bg-slate-800/80 p-3 space-y-2 mt-2">
+                <p className="text-xs font-semibold text-white">Schedule Publication</p>
+                <select value={schedulePlatform} onChange={e => setSchedulePlatform(e.target.value)}
+                  className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white">
+                  <option value="youtube_shorts">YouTube Shorts</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="instagram_reels">Instagram Reels</option>
+                  <option value="linkedin">LinkedIn</option>
+                </select>
+                <input value={scheduleToken} onChange={e => setScheduleToken(e.target.value)}
+                  placeholder="Access token" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <input value={scheduleTitle} onChange={e => setScheduleTitle(e.target.value)}
+                  placeholder="Title" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <textarea value={scheduleDesc} onChange={e => setScheduleDesc(e.target.value)}
+                  placeholder="Description" rows={2} className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white resize-none" />
+                <input value={scheduleTags} onChange={e => setScheduleTags(e.target.value)}
+                  placeholder="Hashtags" className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <input type="datetime-local" value={scheduleAt} onChange={e => setScheduleAt(e.target.value)}
+                  className="w-full rounded bg-slate-900 border border-slate-600 px-2 py-1.5 text-xs text-white" />
+                <div className="flex gap-2">
+                  <button onClick={() => setScheduleForm(false)} className="flex-1 btn-ghost py-1 text-xs">Cancel</button>
+                  <button onClick={submitSchedule} disabled={!scheduleToken || !scheduleAt || scheduling}
+                    className="flex-1 btn-primary py-1 text-xs">
+                    {scheduling ? "Scheduling..." : "Schedule"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {publishError && <p className="text-xs text-red-400 mt-1">{publishError}</p>}
             {publishSuccess && <p className="text-xs text-emerald-400 mt-1">Published successfully!</p>}
+            {scheduleError && <p className="text-xs text-red-400 mt-1">{scheduleError}</p>}
+            {scheduleSuccess && <p className="text-xs text-emerald-400 mt-1">Scheduled successfully!</p>}
           </div>
         )}
 

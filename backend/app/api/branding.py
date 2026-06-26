@@ -1,10 +1,10 @@
 """Branding and music configuration endpoints."""
-import logging, uuid
-from fastapi import APIRouter, HTTPException
-from app.services.branding import build_watermark_filter, build_caption_style_filter, generate_title_card, BrandConfig
-from app.services.music import get_track_list, search_pixabay_music, generate_backing_track
+import logging
+
+from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional
+
+from app.services.music import get_track_list, search_pixabay_music
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/branding", tags=["branding"])

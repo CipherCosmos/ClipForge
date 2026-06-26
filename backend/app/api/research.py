@@ -1,15 +1,15 @@
-import logging
-import xml.etree.ElementTree as ET
-import httpx
 import json
+import logging
 import random
-from fastapi import APIRouter, Depends, HTTPException, status
+import xml.etree.ElementTree as ET
+from typing import Optional
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
 
 from app.core.security import get_current_user
 from app.models.user import User
-from app.config import settings
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -57,10 +57,10 @@ async def get_trends(
                     for item in channel.findall("item"):
                         title_elem = item.find("title")
                         traffic_elem = item.find("{https://trends.google.com/trending/rss}approx_traffic")
-                        
+
                         title = title_elem.text if title_elem is not None else ""
                         traffic = traffic_elem.text if traffic_elem is not None else "50K+ searches"
-                        
+
                         items.append({
                             "topic": title,
                             "traffic": traffic,
@@ -86,10 +86,10 @@ async def get_trends(
                 for entry in entries:
                     title_elem = entry.find("{http://www.w3.org/2005/Atom}title")
                     link_elem = entry.find("{http://www.w3.org/2005/Atom}link")
-                    
+
                     title = title_elem.text if title_elem is not None else ""
                     link = link_elem.attrib.get("href", "") if link_elem is not None else ""
-                    
+
                     if title:
                         items.append({
                             "topic": title,
@@ -113,13 +113,13 @@ async def get_trends(
                 for item in root.findall(".//item"):
                     title_elem = item.find("title")
                     link_elem = item.find("link")
-                    
+
                     title = title_elem.text if title_elem is not None else ""
                     if title and " - " in title:
                         title = title.rsplit(" - ", 1)[0]
-                        
+
                     link = link_elem.text if link_elem is not None else ""
-                    
+
                     if title:
                         items.append({
                             "topic": title,
@@ -159,7 +159,7 @@ async def get_trends(
                                 traffic_desc += f" • {views/1000:.0f}K views"
                             else:
                                 traffic_desc += f" • {views} views"
-                        
+
                         video_url = entry.get("url") or entry.get("webpage_url")
                         if not video_url and entry.get("id"):
                             video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
@@ -190,7 +190,7 @@ async def analyze_trend_topic(
     """Analyze a trending topic using Ollama. Outputs rich script outline, hook variations, viral triggers, and CTA."""
     topic = payload.topic
     tone = payload.tone or "viral"
-    
+
     prompt = (
         f"You are a viral shorts creator. Analyze the trending topic: '{topic}' with a '{tone}' tone.\n"
         "Provide a plan to create a viral short video about this topic. Rate its viral potential and return ONLY valid JSON in this exact structure:\n"
@@ -209,7 +209,7 @@ async def analyze_trend_topic(
         "  \"target_audience\": \"Niche or demographic description\"\n"
         "}"
     )
-    
+
     from app.services.llm import generate_llm_async
 
     # Ensure fallback keys match exactly
@@ -236,7 +236,7 @@ async def analyze_trend_topic(
         data = await generate_llm_async(prompt, format_json=True, timeout=30.0)
         response_text = data.get("response", "{}")
         analysis = json.loads(response_text)
-        
+
         # Ensure all required keys exist in response
         for k, default_val in fallback_analysis.items():
             if k not in analysis:
@@ -267,14 +267,14 @@ async def crawl_videos(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             res = ydl.extract_info(f"ytsearch10:{query}", download=False)
             entries = res.get("entries", [])
-            
+
             results = []
             for item in entries:
                 if not item:
                     continue
-                
+
                 duration = item.get("duration")
-                
+
                 # Apply duration filter based on video_type
                 if video_type == "shorts":
                     if duration is not None and duration > 60:
@@ -282,11 +282,11 @@ async def crawl_videos(
                 elif video_type == "long":
                     if duration is not None and duration <= 60:
                         continue
-                
+
                 video_url = item.get("url") or item.get("webpage_url")
                 if not video_url and item.get("id"):
                     video_url = f"https://www.youtube.com/watch?v={item.get('id')}"
-                
+
                 results.append({
                     "title": item.get("title", "Untitled Video"),
                     "url": video_url,
@@ -294,7 +294,7 @@ async def crawl_videos(
                     "uploader": item.get("uploader") or item.get("channel", "Unknown Channel"),
                     "view_count": item.get("view_count"),
                 })
-            
+
             # Slice results to top 5 matches
             return {"videos": results[:5]}
     except Exception as e:

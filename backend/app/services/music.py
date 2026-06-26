@@ -1,7 +1,11 @@
 """Royalty-free music library service."""
-import json, logging, os, random, subprocess, tempfile
+import logging
+import subprocess
 from typing import Any
+
 import httpx
+
+from app.services.llm import generate_llm
 
 logger = logging.getLogger(__name__)
 
@@ -33,27 +37,98 @@ def get_track_list() -> list[dict[str, Any]]:
     return tracks
 
 
+def recommend_music_for_topic(topic: str) -> str | None:
+    """Use Ollama to recommend a music track from BUILT_IN_TRACKS for a given topic."""
+    track_ids = ", ".join(BUILT_IN_TRACKS.keys())
+    prompt = (
+        f"Given the topic '{topic}', recommend one music track from: {track_ids}. "
+        f"Return ONLY the track ID."
+    )
+    try:
+        result = generate_llm(prompt=prompt, timeout=15.0)
+        track_id = result.get("response", "").strip().lower()
+        if track_id in BUILT_IN_TRACKS:
+            logger.info("Ollama recommended track '%s' for topic '%s'", track_id, topic)
+            return track_id
+        # Try fuzzy match
+        for tid in BUILT_IN_TRACKS:
+            if tid in track_id or track_id in tid:
+                logger.info("Fuzzy matched track '%s' for topic '%s'", tid, topic)
+                return tid
+        logger.warning("Ollama returned unrecognized track '%s' for topic '%s'", track_id, topic)
+        return None
+    except Exception as e:
+        logger.warning("Music recommendation failed for topic '%s': %s", topic, e)
+        return None
+
+
+def _build_track_filter(track_id: str, duration: float) -> list[str]:
+    """Build FFmpeg lavfi inputs and filter_complex for multi-layer backing tracks.
+
+    Each track type uses different oscillator combinations, noise, and effects
+    to produce distinct musical backing.
+    """
+    bpm = BUILT_IN_TRACKS[track_id]["bpm"]
+    beat_dur = 60.0 / bpm
+
+    if track_id == "upbeat_corporate":
+        # Bright: major chord arpeggio + light percussion
+        return [
+            "-f", "lavfi", "-i", f"aevalsrc=sin(523*t):s=44100:d={duration}[a]",
+            "-f", "lavfi", "-i", f"aevalsrc=sin(659*t)*0.7: s=44100:d={duration}[b]",
+            "-f", "lavfi", "-i", f"aevalsrc=sin(784*t)*0.5: s=44100:d={duration}[c]",
+            "-filter_complex",
+            f"[a][b][c]amix=inputs=3:duration=first,volume=0.25,"
+            f"aformat=sample_rates=44100:channel_layouts=stereo,"
+            f"afade=t=in:d=0.5,afade=t=out:st={max(0,duration-1)}:d=1",
+        ]
+    elif track_id == "cinematic_drama":
+        # Dark: low drone + slow pad + sweep
+        return [
+            "-f", "lavfi", "-i", f"aevalsrc=sin(110*t):s=44100:d={duration}[drone]",
+            "-f", "lavfi", "-i", f"aevalsrc=sin(165*t)*0.6+sin(220*t)*0.3:s=44100:d={duration}[pad]",
+            "-f", "lavfi", "-i", f"anoisesrc=d={duration}:c=pink:a=0.3[noise]",
+            "-filter_complex",
+            f"[drone]volume=0.3,lowpass=f=200[layer1];"
+            f"[pad]volume=0.15,lowpass=f=500[layer2];"
+            f"[noise]volume=0.05,lowpass=f=1000[layer3];"
+            f"[layer1][layer2][layer3]amix=inputs=3:duration=first,"
+            f"aformat=sample_rates=44100:channel_layouts=stereo,"
+            f"afade=t=in:d=1,afade=t=out:st={max(0,duration-2)}:d=2",
+        ]
+    elif track_id == "lofi_chill":
+        # Warm: soft pad + gentle beat
+        return [
+            "-f", "lavfi", "-i", f"aevalsrc=sin(262*t)*0.5+sin(330*t)*0.3+sin(393*t)*0.2:s=44100:d={duration}[chord]",
+            "-f", "lavfi", "-i", f"anoisesrc=d={duration}:c=brown:a=0.5[vibe]",
+            "-filter_complex",
+            f"[chord]volume=0.2,lowpass=f=800,aformat=sample_rates=44100:channel_layouts=stereo[layer1];"
+            f"[vibe]volume=0.06,equalizer=f=200:width_type=h:width=200:g=-10[layer2];"
+            f"[layer1][layer2]amix=inputs=2:duration=first,"
+            f"afade=t=in:d=1,afade=t=out:st={max(0,duration-1.5)}:d=1.5",
+        ]
+    else:
+        # Default: simple layered tones
+        return [
+            "-f", "lavfi", "-i", f"aevalsrc=sin(440*t)*0.6+sin(550*t)*0.4:s=44100:d={duration}",
+            "-f", "lavfi", "-i", f"anoisesrc=d={duration}:c=white:a=0.2",
+            "-filter_complex",
+            f"[0:a]volume=0.15,lowpass=f=600[tonal];"
+            f"[1:a]volume=0.03,lowpass=f=4000,equalizer=f=200:width_type=h:width=400:g=-15[noise];"
+            f"[tonal][noise]amix=inputs=2:duration=first,"
+            f"aformat=sample_rates=44100:channel_layouts=stereo,"
+            f"afade=t=in:d=0.5,afade=t=out:st={max(0,duration-1)}:d=1",
+        ]
+
+
 def generate_backing_track(track_id: str, duration: float, output_path: str) -> str | None:
-    """Generate a backing track using FFmpeg audio synthesis."""
+    """Generate a backing track using multi-layer FFmpeg audio synthesis."""
     if track_id not in BUILT_IN_TRACKS:
         return None
 
-    info = BUILT_IN_TRACKS[track_id]
-    bpm = info["bpm"]
-    beats_per_sec = bpm / 60
-
     try:
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"sine=frequency=220:duration={duration}",
-            "-f", "lavfi", "-i", f"sine=frequency=330:duration={duration}",
-            "-filter_complex", (
-                f"[0:a]volume=0.3,lowpass=f=400[pad];"
-                f"[1:a]volume=0.1,lowpass=f=600[melody];"
-                f"[pad][melody]amix=inputs=2:duration=first"
-            ),
-            "-ac", "2", "-ar", "44100", "-b:a", "128k", output_path,
-        ]
+        args = _build_track_filter(track_id, duration)
+        cmd = ["ffmpeg", "-y"] + args + ["-ac", "2", "-ar", "44100", "-b:a", "128k", output_path]
         subprocess.run(cmd, capture_output=True, timeout=30, check=True)
         return output_path
     except Exception as e:

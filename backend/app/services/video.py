@@ -12,7 +12,7 @@ def download_from_url(url: str, output_dir: Optional[str] = None) -> str:
         output_dir = tempfile.mkdtemp()
 
     ydl_opts = {
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo+bestaudio/best",
+        "format": "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best",
         "outtmpl": str(Path(output_dir) / "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
@@ -33,17 +33,21 @@ def download_from_url(url: str, output_dir: Optional[str] = None) -> str:
     return str(path.resolve())
 
 
-def get_video_duration(file_path: str) -> Optional[float]:
-    cmd = [
-        "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
-        "-show_format",
-        file_path,
-    ]
+def get_media_duration(file_path: str, default: float = 0.0) -> float:
+    """Get duration in seconds of a media file using ffprobe.
+
+    Single shared utility — all ffprobe duration calls should go through this.
+    """
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
-        return float(data["format"]["duration"])
-    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError, OSError):
-        return None
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        return float(result.stdout.strip())
+    except (ValueError, subprocess.TimeoutExpired, OSError) as exc:
+        return default
+
+
+# Backward compat alias
+get_video_duration = get_media_duration

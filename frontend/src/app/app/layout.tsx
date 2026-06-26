@@ -7,11 +7,13 @@ import { Sidebar } from "@/components/Sidebar"
 import { AuthGate } from "@/components/AuthGate"
 import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { token, loading } = useSelector((s: RootState) => s.auth)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const { CheatSheet } = useKeyboardShortcuts()
 
   useEffect(() => {
     setMounted(true)
@@ -28,7 +30,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!token) return <AuthGate />
 
   return (
-    <div className="flex min-h-screen bg-surface">
+    <div className="flex min-h-screen bg-white dark:bg-surface transition-colors duration-200">
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -43,6 +45,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+      <CheatSheet />
     </div>
   )
 }

@@ -1,24 +1,25 @@
 """Scene detection using PySceneDetect v0.7 (BSD license)."""
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
 import uuid
 
 from scenedetect import SceneManager, open_video
 from scenedetect.detectors import AdaptiveDetector, ContentDetector
 from sqlalchemy import and_
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.ws import broadcast_sync
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
 from app.services.audio import extract_full_audio
 from app.services.diarization import assign_speaker_scores, diarize_audio
-from app.services.scoring import calculate_viral_score
 from app.services.emotion import (
     analyze_full_audio_emotions,
     extract_full_audio_features,
     get_segment_prosody_from_full,
 )
+from app.services.scoring import calculate_viral_score
 from app.services.storage import download_file
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
@@ -130,13 +131,27 @@ def run_scene_detect(self, video_id: str):
         tmp_path = os.path.join(tmpdir, "input.mp4")
         download_file(video.source_url, tmp_path)
 
+        # Downscale to 480p at 5fps for fast scene detection (cuts are detectable at any resolution/fps)
+        downscaled_path = os.path.join(tmpdir, "input_detect.mp4")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_path, "-vf", "scale=854:480,fps=5", "-an",
+                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", downscaled_path],
+                capture_output=True, timeout=60, check=True
+            )
+            detect_path = downscaled_path
+            logger.info("Downscaled video to 480p@5fps for fast scene detection")
+        except Exception as e:
+            logger.warning("Downscale failed, using original: %s", e)
+            detect_path = tmp_path
+
         # Extract full audio for emotion/event analysis
         audio_path = extract_full_audio(tmp_path)
 
-        # Scene detection
+        # Scene detection (on downscaled video for speed)
         logger.info("Detecting scenes for video %s", video_id)
         broadcast_sync(video_id, "scene_detect", 0.0, "running", "Detecting scenes")
-        boundaries = _detect_scenes(tmp_path)
+        boundaries = _detect_scenes(detect_path)
         segments = _assign_scene_intensity(segments, boundaries)
 
         if job:
@@ -220,11 +235,9 @@ def run_scene_detect(self, video_id: str):
             seg["viral_score"] *= seg.get("trend_boost", 1.0)
 
             if job:
-                job_progress = (idx + 1) / max(total, 1)
-                delta = (job_progress - last_progress) * 0.6
-                last_progress = job_progress
-                from sqlalchemy import update, func
-                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
+                job_progress = min(0.99, (idx + 1) / max(total, 1) * 0.5 + 0.5)
+                from sqlalchemy import update
+                session.execute(update(Job).where(Job.id == job.id).values(progress=job_progress))
                 session.commit()
                 pct = int(job_progress * 100)
                 if pct > last_broadcast:
@@ -237,6 +250,16 @@ def run_scene_detect(self, video_id: str):
 
         logger.info("Scene detection + audio analysis complete for video %s", video_id)
         broadcast_sync(video_id, "scene_detect", 1.0, "completed", f"Analyzed {total} segments")
+
+        from app.services.webhooks import fire_event_sync
+        fire_event_sync(video_id, "scene_detect.completed", {
+            "status": "completed",
+            "segments_count": total,
+        })
+
+        # Trigger merge if NLP is also done
+        from app.workers.join_worker import check_and_merge
+        check_and_merge(video_id)
 
         return segments
 
@@ -262,4 +285,4 @@ def run_scene_detect(self, video_id: str):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         if tmpdir and os.path.exists(tmpdir):
-            os.rmdir(tmpdir)
+            shutil.rmtree(tmpdir, ignore_errors=True)

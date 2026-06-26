@@ -1,6 +1,7 @@
 """Translation service using Argos Translate (local, no API key)."""
 
 import logging
+import threading
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -39,18 +40,22 @@ SUPPORTED_LANGUAGES = {
 
 
 _argos_initialized = False
+_argos_lock = threading.Lock()
 
 
 def _ensure_argos_index():
     global _argos_initialized
     if _argos_initialized:
         return
-    try:
-        import argostranslate.package
-        argostranslate.package.update_package_index()
-        _argos_initialized = True
-    except Exception as exc:
-        logger.debug("Argos index update failed: %s", exc)
+    with _argos_lock:
+        if _argos_initialized:
+            return
+        try:
+            import argostranslate.package
+            argostranslate.package.update_package_index()
+            _argos_initialized = True
+        except Exception as exc:
+            logger.debug("Argos index update failed: %s", exc)
 
 
 @lru_cache(maxsize=32)
@@ -92,37 +97,24 @@ def _get_argos_model(lang_pair: str):
     return None
 
 
-def translate_text(text: str, target_lang: str, source_lang: str = "en") -> str:
-    """Translate text from source_lang to target_lang."""
-    import sys
-    if "pytest" in sys.modules or "unittest" in sys.modules:
-        return _translate_text_uncached(text, target_lang, source_lang)
-    return _translate_text_cached(text, target_lang, source_lang)
-
-
-@lru_cache(maxsize=1024)
-def _translate_text_cached(text: str, target_lang: str, source_lang: str) -> str:
-    return _translate_text_uncached(text, target_lang, source_lang)
-
-
 def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> str:
+    """Translate text from source_lang to target_lang."""
     if source_lang == target_lang:
         return text
-
     if target_lang not in SUPPORTED_LANGUAGES:
         logger.warning("Unsupported target language: %s", target_lang)
         return text
-
     lang_pair = f"{source_lang}-{target_lang}"
     model = _get_argos_model(lang_pair)
     if model is None:
-        logger.warning(
-            "Translation model unavailable for %s, returning original", lang_pair
-        )
+        logger.warning("Translation model unavailable for %s, returning original", lang_pair)
         return text
-
     try:
         return model.translate(text)
     except Exception as exc:
         logger.warning("Translation failed for %s: %s", lang_pair, exc)
         return text
+
+
+def translate_text(text: str, target_lang: str, source_lang: str = "en") -> str:
+    return _translate_text_uncached(text, target_lang, source_lang)

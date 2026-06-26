@@ -23,64 +23,83 @@ def _get_sensevoice_model():
     if _model is None:
         try:
             from funasr import AutoModel
-            _model = AutoModel(
+            kwargs = dict(
                 model="iic/SenseVoiceSmall",
                 disable_update=True,
                 disable_progress_bar=True,
             )
+            if DEVICE != "auto":
+                kwargs["device"] = DEVICE
+            _model = AutoModel(**kwargs)
         except ImportError:
             logger.warning("funasr not installed, SenseVoice disabled")
             return None
     return _model
 
 
+def _get_audio_duration(audio_path: str) -> float:
+    """Get audio file duration using ffprobe, returns estimated duration as fallback."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=10
+        )
+        return float(result.stdout.strip())
+    except Exception:
+        return 30.0
+
+
 def _analyze_with_sensevoice(audio_path: str) -> dict[str, Any]:
-    """Run SenseVoice on an audio file. Returns emotions + events."""
+    """Run SenseVoice on an audio file. Returns emotions + events with real duration."""
     model = _get_sensevoice_model()
     if model is None:
         return {"emotions": [], "events": []}
     try:
+        audio_duration = _get_audio_duration(audio_path)
         result = model.generate(input=audio_path)
         emotions = []
         events = []
+        tag_count = 0
+        text = ""
         for item in result if isinstance(result, list) else [result]:
-            text = ""
             if isinstance(item, dict):
                 text = item.get("text", "")
             else:
                 text = getattr(item, "text", "")
 
-            # Scan text for emotion tags
+            # Count tag occurrences for confidence scaling
             for tag, emotion_name in [("<|angry|>", "angry"), ("<|sad|>", "sad"), ("<|happy|>", "happy"), ("<|neutral|>", "neutral")]:
                 if tag in text:
+                    tag_count += 1
+                    confidence = min(0.95, 0.6 + tag_count * 0.1)
                     emotions.append({
-                        "start": 0.0,
-                        "end": 3600.0,
+                        "start": 0.0, "end": audio_duration,
                         "emotion": emotion_name,
-                        "confidence": 0.8,
+                        "confidence": round(confidence, 2),
                     })
 
-            # Scan text for event tags
             for tag, event_name in [("<|laughter|>", "laughter"), ("<|applause|>", "applause"), ("<|music|>", "music"), ("<|singing|>", "music")]:
                 if tag in text:
+                    tag_count += 1
+                    confidence = min(0.95, 0.6 + tag_count * 0.1)
                     events.append({
-                        "start": 0.0,
-                        "end": 3600.0,
+                        "start": 0.0, "end": audio_duration,
                         "event": event_name,
-                        "confidence": 0.8,
+                        "confidence": round(confidence, 2),
                     })
 
-            # Support direct attributes if returned in custom format
+            # Process direct attributes from model output
             if isinstance(item, dict):
                 if "emotion" in item and item["emotion"]:
-                    emotions.append({"start": item.get("start", 0.0), "end": item.get("end", 3600.0), "emotion": item["emotion"], "confidence": item.get("confidence", 0.8)})
+                    emotions.append({"start": item.get("start", 0.0), "end": item.get("end", audio_duration), "emotion": item["emotion"], "confidence": item.get("confidence", 0.7)})
                 if "event" in item and item["event"]:
-                    events.append({"start": item.get("start", 0.0), "end": item.get("end", 3600.0), "event": item["event"], "confidence": item.get("confidence", 0.8)})
+                    events.append({"start": item.get("start", 0.0), "end": item.get("end", audio_duration), "event": item["event"], "confidence": item.get("confidence", 0.7)})
             else:
                 if hasattr(item, "emotion") and item.emotion:
-                    emotions.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", 3600.0), "emotion": item.emotion, "confidence": getattr(item, "confidence", 0.8)})
+                    emotions.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", audio_duration), "emotion": item.emotion, "confidence": getattr(item, "confidence", 0.7)})
                 if hasattr(item, "event") and item.event:
-                    events.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", 3600.0), "event": item.event, "confidence": getattr(item, "confidence", 0.8)})
+                    events.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", audio_duration), "event": item.event, "confidence": getattr(item, "confidence", 0.7)})
 
         return {"emotions": emotions, "events": events}
     except Exception as e:
@@ -154,12 +173,12 @@ def extract_full_audio_features(audio_path: str) -> dict[str, Any]:
         y, sr = librosa.load(audio_path, sr=16000, mono=True)
         if len(y) == 0:
             return {}
-        
+
         hop_length = 512
         rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
         zcr = librosa.feature.zero_crossing_rate(y, hop_length=hop_length)[0]
         spec_cent = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
-        
+
         return {
             "sr": sr,
             "hop_length": hop_length,
@@ -176,7 +195,7 @@ def get_segment_prosody_from_full(features: dict, start: float, end: float) -> d
     """Slice and compute segment prosody statistics from pre-extracted full audio features."""
     if not features:
         return {}
-    
+
     try:
         import numpy as np
         sr = features["sr"]
@@ -184,20 +203,20 @@ def get_segment_prosody_from_full(features: dict, start: float, end: float) -> d
         rms = features["rms"]
         zcr = features["zcr"]
         spec_cent = features["spectral_centroid"]
-        
+
         start_frame = max(0, int(start * sr / hop_length))
         end_frame = min(len(rms), int(end * sr / hop_length))
-        
+
         if start_frame >= end_frame:
             return {}
-            
+
         rms_seg = rms[start_frame:end_frame]
         zcr_seg = zcr[start_frame:end_frame]
         spec_cent_seg = spec_cent[start_frame:end_frame]
-        
+
         if len(rms_seg) == 0:
             return {}
-            
+
         return {
             "energy_mean": float(np.mean(rms_seg)),
             "energy_std": float(np.std(rms_seg)),

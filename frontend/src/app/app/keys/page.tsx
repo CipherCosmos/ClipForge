@@ -31,7 +31,9 @@ export default function ApiKeysPage() {
     try {
       const res = await authAPI.getApiKeyStatus()
       setKeys(res.data.keys || [])
-    } catch {}
+    } catch {
+      setError("Failed to load API keys")
+    }
   }
 
   useEffect(() => { fetchKeys() }, [])
@@ -66,16 +68,16 @@ export default function ApiKeysPage() {
   const expiredOrRevoked = keys.filter(k => !k.is_active || k.is_expired)
 
   return (
-    <div className="animate-fade-in space-y-8 max-w-2xl mx-auto">
-      <div className="flex items-center gap-4">
-        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2">
+    <div className="animate-fade-in space-y-8 w-full max-w-2xl lg:mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2 shrink-0 self-start sm:self-auto">
           <ArrowLeft size={18} />
         </button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-white">API Keys</h1>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white truncate">API Keys</h1>
           <p className="mt-1 text-sm text-slate-400">Programmatic access to ClipForge</p>
         </div>
-        <button onClick={() => setShowCreate(!showCreate)} className="btn-primary text-sm">
+        <button onClick={() => setShowCreate(!showCreate)} className="btn-primary text-sm w-full sm:w-auto">
           <Plus size={16} className="mr-1" /> New Key
         </button>
       </div>
@@ -89,7 +91,7 @@ export default function ApiKeysPage() {
 
       {newKey && (
         <div className="rounded-lg border border-amber-700/50 bg-amber-900/10 p-4 space-y-3">
-          <p className="text-sm font-semibold text-amber-400">Key generated for "{newKey.name}"</p>
+          <p className="text-sm font-semibold text-amber-400">Key generated for &ldquo;{newKey.name}&rdquo;</p>
           <p className="text-xs text-amber-400/70">Save this now — it will never be shown again</p>
           <div className="flex items-center gap-2">
             <code className="flex-1 break-all bg-slate-950 rounded px-3 py-2 text-sm text-slate-200 font-mono border border-slate-700">

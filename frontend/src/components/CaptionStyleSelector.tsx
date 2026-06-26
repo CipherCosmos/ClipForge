@@ -1,6 +1,5 @@
 "use client"
 
-import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 
 const CAPTION_STYLES = [

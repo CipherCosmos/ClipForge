@@ -3,8 +3,8 @@ Free/open-source: HuggingFace transformers + Ollama text moderation.
 """
 import logging
 import os
-import threading
 import tempfile
+import threading
 from typing import Any
 
 import cv2
@@ -27,6 +27,7 @@ def _get_nsfw_classifier():
             return _nsfw_classifier
         try:
             from transformers import pipeline
+
             from app.services.device import get_optimal_device
             nsfw_device = get_optimal_device()
             if nsfw_device == "mps":

@@ -149,6 +149,7 @@ async def update_clip(
 
 from pydantic import BaseModel
 
+
 class ClipDubRequest(BaseModel):
     target_lang: str
 

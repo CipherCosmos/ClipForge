@@ -125,7 +125,7 @@ class TestTranscriptionStep:
 class TestNLPScoringStep:
     """Test that NLP scoring correctly calls Ollama and sets scores."""
 
-    @patch("app.workers.nlp._call_ollama")
+    @patch("app.workers.nlp._call_llm")
     @patch("app.workers.nlp.fetch_trending_keywords")
     @patch("app.workers.nlp.SyncSessionLocal")
     def test_nlp_scores_all_segments(self, mock_session_cls, mock_trending, mock_ollama):
@@ -338,13 +338,14 @@ class TestWatermarkPlanGating:
 class TestPipelineChain:
     """Test the full pipeline chain: event ordering and dependencies."""
 
-    def test_transcription_enqueues_parallel_chord(self):
-        """Verify transcription calls chord with run_nlp and run_scene_detect."""
+    def test_transcription_enqueues_parallel_tasks(self):
+        """Verify transcription enqueues run_nlp and run_scene_detect independently."""
         from app.workers.transcription import run_transcription
         with patch("app.workers.transcription.transcribe_audio") as mock_ta, \
              patch("app.workers.transcription.download_file"), \
              patch("app.workers.transcription.SyncSessionLocal") as mock_sc, \
-             patch("celery.chord") as mock_chord:
+             patch("app.workers.nlp.run_nlp.delay") as mock_nlp, \
+             patch("app.workers.scene_detect.run_scene_detect.delay") as mock_scene:
 
             session = MagicMock()
             mock_sc.return_value = session
@@ -365,13 +366,14 @@ class TestPipelineChain:
 
             run_transcription(str(video.id))
 
-            # Verify chord was enqueued
-            mock_chord.assert_called_once()
+            # Verify both tasks were enqueued independently (no chord)
+            mock_nlp.assert_called_once()
+            mock_scene.assert_called_once()
 
     def test_nlp_returns_segments(self):
         """Verify NLP returns segments for chord."""
         from app.workers.nlp import run_nlp
-        with patch("app.workers.nlp._call_ollama") as mock_ollama, \
+        with patch("app.workers.nlp._call_llm") as mock_ollama, \
              patch("app.workers.nlp.fetch_trending_keywords", return_value=[]), \
              patch("app.workers.nlp.SyncSessionLocal") as mock_sc:
 

@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 import uuid
@@ -8,16 +9,23 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
-from app.database import get_db
 from app.core.ratelimit import limiter
+from app.core.security import get_current_user
+
+logger = logging.getLogger(__name__)
+from app.database import get_db
 from app.models.job import Job, JobStatusEnum, JobTypeEnum
 from app.models.user import User
 from app.models.video import Video, VideoStatusEnum
 from app.schemas.video import VideoCreate, VideoListResponse, VideoResponse
 from app.services.platforms import get_preset, list_presets
-from app.services.storage import delete_file, delete_prefix, ensure_bucket, get_presigned_url, upload_file
-from app.services.video import download_from_url, get_video_duration
+from app.services.storage import (
+    delete_file,
+    delete_prefix,
+    ensure_bucket,
+    get_presigned_url,
+    upload_file,
+)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -30,7 +38,7 @@ def _validate_url(url: str):
         raise HTTPException(status_code=400, detail="Invalid URL")
 
 
-def _video_to_response(video: Video) -> VideoResponse:
+async def _video_to_response(video: Video, db: AsyncSession | None = None) -> VideoResponse:
     resp = VideoResponse.model_validate(video)
     if video.source_url and not video.source_url.startswith("http"):
         try:
@@ -42,6 +50,30 @@ def _video_to_response(video: Video) -> VideoResponse:
             (s.get("viral_score", 0.0) for s in video.segments if isinstance(s, dict)),
             default=None,
         )
+    # Include job progress for frontend real-time polling
+    if db:
+        try:
+            import uuid
+            from sqlalchemy import select, func as sa_func
+            from app.models import Job, JobStatusEnum
+            running_job = await db.execute(
+                select(Job).where(
+                    Job.video_id == uuid.UUID(str(video.id)),
+                    Job.status == JobStatusEnum.RUNNING,
+                ).limit(1)
+            )
+            rj = running_job.scalar_one_or_none()
+            if rj:
+                resp.progress = min(99.0, rj.progress * 100.0)
+            else:
+                all_jobs = await db.execute(
+                    select(Job).where(Job.video_id == uuid.UUID(str(video.id)))
+                )
+                jlist = all_jobs.scalars().all()
+                if jlist and all(j.status == JobStatusEnum.DONE for j in jlist):
+                    resp.progress = 100.0
+        except Exception:
+            pass
     return resp
 
 
@@ -94,7 +126,7 @@ async def upload_video(
     from app.workers.transcription import run_transcription
     run_transcription.delay(str(video.id))
 
-    return _video_to_response(video)
+    return await _video_to_response(video, db)
 
 
 @router.post("/import", response_model=VideoResponse, status_code=status.HTTP_201_CREATED)
@@ -133,7 +165,7 @@ async def import_video(
     from app.workers.transcription import run_transcription
     run_transcription.delay(str(video.id))
 
-    return _video_to_response(video)
+    return await _video_to_response(video, db)
 
 
 @router.post("/import-batch", status_code=status.HTTP_201_CREATED)
@@ -208,7 +240,7 @@ async def list_videos(
     videos = result.scalars().all()
 
     return VideoListResponse(
-        items=[_video_to_response(v) for v in videos],
+        items=[await _video_to_response(v, db) for v in videos],
         total=total,
     )
 
@@ -225,7 +257,7 @@ async def get_video(
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
-    return _video_to_response(video)
+    return await _video_to_response(video, db)
 
 @router.post("/{video_id}/reprocess", response_model=VideoResponse)
 async def reprocess_video(
@@ -241,7 +273,7 @@ async def reprocess_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     from app.models.clip import Clip
-    
+
     # Reset video metadata to force complete recalculation
     video.transcript = None
     video.segments = None
@@ -249,35 +281,42 @@ async def reprocess_video(
 
     await db.execute(delete(Clip).where(Clip.video_id == video_id))
     await db.execute(delete(Job).where(Job.video_id == video_id))
-    
+
     video.status = VideoStatusEnum.UPLOADED
-    
+
     job1 = Job(
-        video_id=video.id, 
-        type=JobTypeEnum.TRANSCRIPTION, 
+        video_id=video.id,
+        type=JobTypeEnum.TRANSCRIPTION,
         status=JobStatusEnum.QUEUED,
         progress=0.0
     )
     job2 = Job(
-        video_id=video.id, 
-        type=JobTypeEnum.HIGHLIGHT, 
+        video_id=video.id,
+        type=JobTypeEnum.HIGHLIGHT,
         status=JobStatusEnum.QUEUED,
         progress=0.0
     )
     job3 = Job(
-        video_id=video.id, 
-        type=JobTypeEnum.RENDER, 
+        video_id=video.id,
+        type=JobTypeEnum.RENDER,
         status=JobStatusEnum.QUEUED,
         progress=0.0
     )
     db.add_all([job1, job2, job3])
     await db.commit()
     await db.refresh(video)
-    
-    from app.workers.transcription import run_transcription
-    run_transcription.delay(str(video.id))
 
-    return _video_to_response(video)
+    from app.workers.transcription import run_transcription
+    try:
+        run_transcription.delay(str(video.id))
+    except Exception as e:
+        logger.error("Failed to enqueue transcription task: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Processing queue unavailable. Make sure Celery and Redis are running."
+        )
+
+    return await _video_to_response(video, db)
 
 
 
@@ -339,6 +378,7 @@ async def batch_delete_videos(
 
 from pydantic import BaseModel
 
+
 class VideoDubRequest(BaseModel):
     target_langs: list[str] | None = None
 
@@ -360,4 +400,4 @@ async def dub_video(
     from app.workers.dubbing import run_dub_video
     run_dub_video.delay(str(video_id), payload.target_langs)
 
-    return _video_to_response(video)
+    return await _video_to_response(video, db)

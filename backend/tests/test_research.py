@@ -138,12 +138,11 @@ class TestResearchEndpoints:
         assert data["trends"][0]["source"] == "news"
 
     @pytest.mark.asyncio
-    @patch("app.api.research.httpx.AsyncClient")
-    async def test_analyze_topic_ollama_success(self, mock_async_client_class):
+    @patch("app.services.llm._get_http")
+    async def test_analyze_topic_ollama_success(self, mock_get_http):
         mock_client = MagicMock()
-        mock_async_client_class.return_value.__aenter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
-        # Mock Ollama generation response returning expanded JSON
         ollama_response_json = {
             "viral_potential": 0.95,
             "video_concept": "Concept description",
@@ -162,10 +161,7 @@ class TestResearchEndpoints:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.json = MagicMock(return_value={"response": json.dumps(ollama_response_json)})
-        
-        async def mock_post(url, *args, **kwargs):
-            return mock_response
-        mock_client.post = mock_post
+        mock_client.post.return_value = mock_response
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -180,14 +176,11 @@ class TestResearchEndpoints:
         assert data["target_audience"] == "Tech people"
 
     @pytest.mark.asyncio
-    @patch("app.api.research.httpx.AsyncClient")
-    async def test_analyze_topic_ollama_failure_fallback(self, mock_async_client_class):
+    @patch("app.services.llm._get_http")
+    async def test_analyze_topic_ollama_failure_fallback(self, mock_get_http):
         mock_client = MagicMock()
-        mock_async_client_class.return_value.__aenter__.return_value = mock_client
-        
-        async def mock_post(url, *args, **kwargs):
-            raise Exception("Ollama connection error")
-        mock_client.post = mock_post
+        mock_get_http.return_value = mock_client
+        mock_client.post.side_effect = Exception("Ollama connection error")
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -195,7 +188,6 @@ class TestResearchEndpoints:
             
         assert r.status_code == 200
         data = r.json()
-        # Should return fallback structure
         assert data["viral_potential"] == 0.85
         assert len(data["hook_variations"]) == 3
         assert "hashtags" in data

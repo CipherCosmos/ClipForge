@@ -27,6 +27,7 @@ SAMPLE_USER = User(
     email="test@clipforge.dev",
     password_hash="hashed",
     plan=PlanEnum.FREE,
+    email_verified=False,
     created_at=datetime.now(timezone.utc),
 )
 

@@ -9,17 +9,16 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
-import httpx
 from sqlalchemy import and_
 
 from app.api.ws import broadcast_sync
-from app.config import settings
-from app.models import Clip, Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
+from app.models import Job, JobStatusEnum, JobTypeEnum, User, Video, VideoStatusEnum
 from app.services.branding import BrandConfig, build_watermark_filter, generate_title_card
 from app.services.ducking import build_duck_filter
 from app.services.moderation import moderate_segment
 from app.services.platforms import get_preset
-from app.services.storage import download_file, ensure_bucket, upload_file, get_presigned_url
+from app.services.storage import download_file, ensure_bucket, get_presigned_url, upload_file
+from app.services.video import get_media_duration
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
@@ -152,148 +151,89 @@ def _score_candidate_window(segments: list[dict], i: int, j: int, duration: floa
     return avg_score * duration_mult * coherence_mult
 
 
-def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
-    """Identify the best 45 to 90 second clips by grouping consecutive segments.
-    Prefers clips close to 60 seconds and starting/ending cleanly at sentence boundaries.
-    Uses sliding window + Non-Maximum Suppression (NMS) to avoid overlapping clips.
-    """
-    if not segments:
-        return []
-
-    # Fallback to sorting raw segments if timing keys are missing (e.g. in unit tests)
-    if not all("start" in s and "end" in s for s in segments):
-        scored = [s for s in segments if s.get("viral_score", 0) > 0]
-        scored.sort(key=lambda s: s["viral_score"], reverse=True)
-        return scored[:n]
-
+def _generate_windows(segments: list[dict], min_dur: float, max_dur: float = 90.0) -> list[dict]:
+    """Generate candidate clip windows from consecutive segments in [min_dur, max_dur] range."""
     candidates = []
-    
-    # 1. Generate all consecutive segment windows that are between 45s and 90s (primary range)
     for i in range(len(segments)):
         for j in range(i, len(segments)):
             start_time = segments[i]["start"]
             end_time = segments[j]["end"]
             duration = end_time - start_time
-            
-            if 45.0 <= duration <= 90.0:
-                # Calculate average viral score for the segments in this window
+
+            if min_dur <= duration <= max_dur:
                 window_segs = segments[i:j+1]
                 avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                
-                # Apply boundary coherence and duration multiplier
                 final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                
                 joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                
                 candidates.append({
-                    "start": start_time,
-                    "end": end_time,
-                    "text": joined_text,
-                    "viral_score": final_score,
-                    "segment_indices": set(range(i, j+1))
+                    "start": start_time, "end": end_time, "text": joined_text,
+                    "viral_score": final_score, "segment_indices": set(range(i, j+1))
                 })
-            elif duration > 90.0:
+            elif duration > max_dur:
                 break
+    return candidates
 
-    # If no candidate windows fall in the 45s-90s range, fallback to 30s-90s
-    if not candidates:
-        logger.warning("No multi-segment windows of 45s-90s found, falling back to 30s-90s.")
-        for i in range(len(segments)):
-            for j in range(i, len(segments)):
-                start_time = segments[i]["start"]
-                end_time = segments[j]["end"]
-                duration = end_time - start_time
-                
-                if 30.0 <= duration <= 90.0:
-                    window_segs = segments[i:j+1]
-                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                    candidates.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "text": joined_text,
-                        "viral_score": final_score,
-                        "segment_indices": set(range(i, j+1))
-                    })
-                elif duration > 90.0:
-                    break
 
-    # If still no candidate windows, fallback to 15s-90s
-    if not candidates:
-        logger.warning("No multi-segment windows of 30s-90s found, falling back to 15s-90s.")
-        for i in range(len(segments)):
-            for j in range(i, len(segments)):
-                start_time = segments[i]["start"]
-                end_time = segments[j]["end"]
-                duration = end_time - start_time
-                
-                if 15.0 <= duration <= 90.0:
-                    window_segs = segments[i:j+1]
-                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                    candidates.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "text": joined_text,
-                        "viral_score": final_score,
-                        "segment_indices": set(range(i, j+1))
-                    })
-                elif duration > 90.0:
-                    break
+def _top_non_overlapping(candidates: list[dict], n: int) -> list[dict]:
+    """Select top-N non-overlapping candidates via greedy NMS with overlap relaxation."""
+    candidates.sort(key=lambda c: c["viral_score"], reverse=True)
 
-    # If still no candidates, fallback to raw segments
-    if not candidates:
-        logger.warning("No multi-segment windows found, falling back to raw segments.")
+    selected = []
+    used = set()
+
+    for cand in candidates:
+        if len(selected) >= n:
+            break
+        if not cand["segment_indices"].intersection(used):
+            selected.append(cand)
+            used.update(cand["segment_indices"])
+
+    # Relaxation pass — allow up to 30% overlap
+    if len(selected) < n:
+        for cand in candidates:
+            if len(selected) >= n:
+                break
+            if cand in selected:
+                continue
+            overlap = len(cand["segment_indices"].intersection(used)) / max(len(cand["segment_indices"]), 1)
+            if overlap <= 0.3:
+                selected.append(cand)
+                used.update(cand["segment_indices"])
+
+    # Fill remaining with whatever's left
+    for cand in candidates:
+        if len(selected) >= n:
+            break
+        if cand not in selected:
+            selected.append(cand)
+
+    selected.sort(key=lambda c: c["start"])
+    for clip in selected:
+        clip.pop("segment_indices", None)
+    return selected
+
+
+def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
+    """Identify the best 45-90 second clips by grouping consecutive segments.
+    Falls back through progressively shorter windows, then raw segments.
+    """
+    if not segments:
+        return []
+
+    if not all("start" in s and "end" in s for s in segments):
         scored = [s for s in segments if s.get("viral_score", 0) > 0]
         scored.sort(key=lambda s: s["viral_score"], reverse=True)
         return scored[:n]
 
-    # 2. Sort candidates by score descending
-    candidates.sort(key=lambda c: c["viral_score"], reverse=True)
+    for min_dur in (45.0, 30.0, 15.0):
+        candidates = _generate_windows(segments, min_dur)
+        if candidates:
+            return _top_non_overlapping(candidates, n)
 
-    # 3. Perform Non-Maximum Suppression (NMS) to select non-overlapping clips
-    selected_clips = []
-    used_segments = set()
-
-    for cand in candidates:
-        if len(selected_clips) >= n:
-            break
-            
-        if not cand["segment_indices"].intersection(used_segments):
-            selected_clips.append(cand)
-            used_segments.update(cand["segment_indices"])
-
-    # If we didn't find enough completely non-overlapping clips, relax the constraint
-    if len(selected_clips) < n:
-        for cand in candidates:
-            if len(selected_clips) >= n:
-                break
-            if cand in selected_clips:
-                continue
-            intersection_size = len(cand["segment_indices"].intersection(used_segments))
-            if intersection_size / len(cand["segment_indices"]) <= 0.3:
-                selected_clips.append(cand)
-                used_segments.update(cand["segment_indices"])
-
-    # Fill remaining slots if any
-    if len(selected_clips) < n:
-        for cand in candidates:
-            if len(selected_clips) >= n:
-                break
-            if any(c["start"] == cand["start"] and c["end"] == cand["end"] for c in selected_clips):
-                continue
-            selected_clips.append(cand)
-
-    # Sort selected clips chronological order so they render in order
-    selected_clips.sort(key=lambda c: c["start"])
-
-    # Remove temporary helper keys
-    for clip in selected_clips:
-        clip.pop("segment_indices", None)
-
-    return selected_clips
+    logger.warning("No multi-segment windows found, falling back to raw segments.")
+    scored = [s for s in segments if s.get("viral_score", 0) > 0]
+    scored.sort(key=lambda s: s["viral_score"], reverse=True)
+    return scored[:n]
 
 
 
@@ -306,28 +246,28 @@ def _detect_stable_face_center(video_path: str, start_time: float, duration: flo
             return None
         iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
+
         # Sample up to 15 frames spaced evenly across the clip
         num_samples = 15
         sample_times = [start_time + (i * duration / max(1, num_samples - 1)) for i in range(num_samples)]
-        
+
         detected_centers = []
-        
+
         for t in sample_times:
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
-            
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
+
             # 1. Try frontal face
             faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 3)
-            
+
             # 2. Try profile face (facing right)
             if len(faces) == 0:
                 faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 3)
-                
+
             # 3. Try profile face flipped (facing left)
             if len(faces) == 0:
                 flipped = cv2.flip(gray, 1)
@@ -337,25 +277,25 @@ def _detect_stable_face_center(video_path: str, start_time: float, duration: flo
                     xf, yf, wf, hf = largest_face
                     # Map x back to original coordinate space
                     faces = [(iw - xf - wf, yf, wf, hf)]
-            
+
             if len(faces) > 0:
                 # Find the largest face detected
                 largest_face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = largest_face
                 detected_centers.append((x + w // 2, y + h // 2))
-                
+
         cap.release()
-        
+
         if detected_centers:
             cxs = [c[0] for c in detected_centers]
             cys = [c[1] for c in detected_centers]
             cx = int(np.median(cxs))
             cy = int(np.median(cys))
-            logger.info("Face detection successful: detected %d/%d frames. Stable center: (%d, %d) in %dx%d video", 
+            logger.info("Face detection successful: detected %d/%d frames. Stable center: (%d, %d) in %dx%d video",
                         len(detected_centers), num_samples, cx, cy, iw, ih)
             return cx, cy
-            
-        logger.info("No faces detected in %d frames. Falling back to video center: (%d, %d)", 
+
+        logger.info("No faces detected in %d frames. Falling back to video center: (%d, %d)",
                     num_samples, iw // 2, ih // 2)
         return iw // 2, ih // 2
     except Exception as e:
@@ -394,7 +334,7 @@ def _get_crop_filter(
     zoom_factor = 1.3
     crop_h = int(ih / zoom_factor)
     crop_w = int(crop_h * preset_w / preset_h)
-    
+
     if crop_w > iw:
         crop_w = iw
         crop_h = int(iw * preset_h / preset_w)
@@ -729,7 +669,7 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
         hashtags_raw = r.get("hashtags") or ""
         hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
         hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-        
+
         metadata = {
             "title": title_val[:100] if title_val else "Generated Clip",
             "caption": caption_val[:500] if caption_val else seg.get("text", "")[:500],
@@ -740,22 +680,17 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
     return output
 
 
-def _get_media_duration(file_path: str) -> float:
-    """Get duration in seconds of a media file using ffprobe."""
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                file_path,
-            ],
-            capture_output=True, text=True, timeout=15,
-        )
-        return float(result.stdout.strip())
-    except (ValueError, subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("Failed to get duration for %s: %s", file_path, exc)
-        return 0.0
+def _render_black_video(output_path: str, pw: int, ph: int) -> str:
+    """Render a 2-second black video with standard encoding."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+    return output_path
 
 
 def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 1920, brand: BrandConfig | None = None) -> str:
@@ -765,15 +700,7 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
         if result:
             return result
     if not _has_drawtext():
-        pure_black = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            output_path,
-        ]
-        subprocess.run(pure_black, capture_output=True, text=True, timeout=30)
-        return output_path
+        return _render_black_video(output_path, pw, ph)
     safe_text = text.strip()[:50]
     for ch in (":", "'", "%", "[", "]", "{", "}", "\\"):
         safe_text = safe_text.replace(ch, f"\\{ch}")
@@ -792,11 +719,7 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
         output_path,
     ]
     logger.debug("Creating title card: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(f"Title card FFmpeg failed: {result.stderr[:500]}")
-    if not os.path.exists(output_path):
-        raise RuntimeError(f"Title card not produced: {output_path}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
     logger.info("Created title card: %s", output_path)
     return output_path
 
@@ -804,15 +727,7 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
 def _create_end_card(output_path: str, pw: int = 1080, ph: int = 1920) -> str:
     """Create a 2-second end card with Subscribe text on black background."""
     if not _has_drawtext():
-        pure_black = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            output_path,
-        ]
-        subprocess.run(pure_black, capture_output=True, text=True, timeout=30)
-        return output_path
+        return _render_black_video(output_path, pw, ph)
     cmd = [
         "ffmpeg", "-y",
         "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
@@ -826,11 +741,7 @@ def _create_end_card(output_path: str, pw: int = 1080, ph: int = 1920) -> str:
         output_path,
     ]
     logger.debug("Creating end card: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(f"End card FFmpeg failed: {result.stderr[:500]}")
-    if not os.path.exists(output_path):
-        raise RuntimeError(f"End card not produced: {output_path}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
     logger.info("Created end card: %s", output_path)
     return output_path
 
@@ -1018,8 +929,6 @@ def run_render(self, video_id: str):
         # ── Smart Resume: skip if clips already exist (previous run completed) ──
         from app.models.clip import Clip
         existing_clips = session.query(Clip).filter(Clip.video_id == video_uuid).count()
-        render_done = existing_clips > 0 and job and job.status == JobStatusEnum.DONE
-
         job = (
             session.query(Job)
             .filter(
@@ -1030,6 +939,7 @@ def run_render(self, video_id: str):
             )
             .first()
         )
+        render_done = existing_clips > 0 and job and job.status == JobStatusEnum.DONE
 
         if render_done:
             logger.info("Smart Resume: %d clips already exist for video %s, skipping render", existing_clips, video_id)
@@ -1062,7 +972,7 @@ def run_render(self, video_id: str):
         # instead of 2× sequential calls per segment (was 20+ Ollama calls, now 1-2).
         logger.info("Batch-generating metadata for %d segments using Ollama", len(top_segments))
         broadcast_sync(video_id, "render", 0.0, "running", f"Analyzing metadata for {len(top_segments)} clips")
-        
+
         pre_generated_data = _batch_generate_metadata(top_segments)
 
         broadcast_sync(video_id, "render", 0.0, "running", f"Rendering {len(top_segments)} clips")
@@ -1080,10 +990,10 @@ def run_render(self, video_id: str):
             # Apply background music if configured
             music_track = prefs.get("music_track", "")
             if music_track and segments:
-                from app.services.music import generate_backing_track, apply_backing_music
+                from app.services.music import apply_backing_music, generate_backing_track
                 music_path = tempfile.mktemp(suffix=".mp3")
                 try:
-                    video_duration = _get_media_duration(input_video_path)
+                    video_duration = get_media_duration(input_video_path)
                     result = generate_backing_track(music_track, video_duration, music_path)
                     if result:
                         speech_segments = [{"start": s["start"], "end": s["end"]} for s in segments if s.get("text", "").strip()]
@@ -1182,6 +1092,13 @@ def run_render(self, video_id: str):
                 job.progress = 1.0
             session.commit()
             broadcast_sync(video_id, "render", 1.0, "completed", f"Rendered {len(results)} clips")
+
+            from app.services.webhooks import fire_event_sync
+            fire_event_sync(video_id, "render.completed", {
+                "status": "completed",
+                "clips_count": len(results),
+            })
+
             logger.info(
                 "Rendered %d clips for video %s",
                 len(top_segments),

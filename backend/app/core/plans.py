@@ -2,7 +2,9 @@
 import logging
 
 from fastapi import HTTPException
+from sqlalchemy import select
 
+from app.models.subscription import Subscription
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -30,8 +32,22 @@ def get_limits(user: User) -> dict:
     return FREE_LIMITS
 
 
+async def check_subscription_active(user: User, db_session) -> bool:
+    """Check if a pro user has an active subscription.
+    Returns True for free users (they just get limited features, no errors)."""
+    if user.plan != "pro":
+        return True
+    result = await db_session.execute(
+        select(Subscription).where(Subscription.user_id == user.id)
+    )
+    sub = result.scalar_one_or_none()
+    if not sub or sub.status in ("canceled", "past_due", "incomplete", "incomplete_expired"):
+        return False
+    return sub.status in ("active", "trialing")
+
+
 async def check_upload_limit(user: User, db_session) -> None:
-    from sqlalchemy import func, select
+    from sqlalchemy import func
 
     from app.models.video import Video
 

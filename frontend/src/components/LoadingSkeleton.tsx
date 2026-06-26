@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 
-export function CardSkeleton() {
+function CardSkeleton() {
   return (
     <div className="card animate-fade-in p-4">
       <div className="skeleton mb-3 aspect-video w-full rounded-lg" />

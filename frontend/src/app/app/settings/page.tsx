@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { ArrowLeft, Palette, Music, Type, Globe, Save } from "lucide-react"
+import { ArrowLeft, Palette, Music, Globe, Save } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { CaptionStyleSelector } from "@/components/CaptionStyleSelector"
 import { authAPI } from "@/lib/api"
@@ -14,6 +14,7 @@ export default function SettingsPage() {
   const [musicTrack, setMusicTrack] = useState("")
   const [researchLocation, setResearchLocation] = useState("US")
   const [saved, setSaved] = useState(false)
+  const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,13 +27,16 @@ export default function SettingsPage() {
         setCaptionStyle(s.caption_style || "classic")
         setMusicTrack(s.music_track || "")
         setResearchLocation(s.research_location || "US")
-      } catch {}
+      } catch (e) {
+        setError("Failed to load settings")
+      }
       setLoading(false)
     })()
   }, [])
 
   const handleSave = async () => {
     setLoading(true)
+    setError("")
     try {
       await authAPI.updateSettings({
         watermark_text: watermark,
@@ -43,25 +47,27 @@ export default function SettingsPage() {
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch {}
+    } catch (e) {
+      setError("Failed to save settings")
+    }
     setLoading(false)
   }
 
   if (loading) return <div className="flex items-center justify-center py-20 text-slate-400">Loading...</div>
 
   return (
-    <div className="animate-fade-in space-y-8 max-w-2xl mx-auto">
+    <div className="animate-fade-in space-y-8 w-full max-w-2xl lg:mx-auto">
       <div className="flex items-center gap-4">
-        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2">
+        <button onClick={() => router.push("/app")} className="btn-ghost -ml-2 shrink-0">
           <ArrowLeft size={18} />
         </button>
-        <div>
-          <h1 className="text-2xl font-bold text-white">Settings</h1>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-white truncate">Settings</h1>
           <p className="mt-1 text-sm text-slate-400">Customize your brand, output, and defaults</p>
         </div>
       </div>
 
-      <div className="card p-6 space-y-6">
+      <div className="card p-4 sm:p-6 space-y-6">
         <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
           <Palette size={20} className="text-brand-400" />
           <h2 className="text-lg font-bold text-white">Branding</h2>
@@ -125,6 +131,11 @@ export default function SettingsPage() {
           </select>
         </div>
 
+        {error && (
+          <div className="rounded-lg border border-red-800/50 bg-red-900/10 px-4 py-3 text-sm text-red-400">
+            {error}
+          </div>
+        )}
         <button onClick={handleSave} disabled={loading}
           className="btn-primary w-full py-2.5 flex items-center justify-center gap-2">
           <Save size={16} />

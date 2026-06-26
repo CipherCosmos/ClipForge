@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { 
   Search, Flame, Sparkles, Play, ArrowRight, Clock, Eye, Globe, 
   RefreshCw, Check, AlertCircle, Sparkle, Copy, BookOpen, 
-  Film, MessageSquare, MapPin, TrendingUp, Music, Users, Layers
+  Film, MessageSquare, MapPin, Music, Users, Layers
 } from "lucide-react"
 import { researchAPI, videosAPI, authAPI } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -107,10 +107,6 @@ export default function ResearchPage() {
     })()
   }, [])
 
-  useEffect(() => {
-    loadTrends(selectedGeo, selectedSource)
-  }, [selectedGeo, selectedSource])
-
   const loadTrends = async (geoCode: string, sourceFeed: string) => {
     setLoadingTrends(true)
     try {
@@ -122,6 +118,11 @@ export default function ResearchPage() {
       setLoadingTrends(false)
     }
   }
+
+  useEffect(() => {
+    loadTrends(selectedGeo, selectedSource)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGeo, selectedSource])
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToastMessage(msg)
@@ -366,7 +367,7 @@ export default function ResearchPage() {
               <p className="text-xs text-slate-500">No live trends retrieved. Try refreshing.</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+            <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1">
               {trends.map((t, idx) => (
                 <button
                   key={idx}
@@ -525,7 +526,7 @@ export default function ResearchPage() {
                 </div>
 
                 {/* Dashboard Tabs Navigation */}
-                <div className="flex gap-1 border-b border-slate-850 pb-2 mb-4 overflow-x-auto">
+                <div className="flex gap-1 border-b border-slate-700 pb-2 mb-4 overflow-x-auto">
                   <button
                     onClick={() => setActiveTab("script")}
                     className={cn(
@@ -588,14 +589,14 @@ export default function ResearchPage() {
                         </p>
                       </div>
                       
-                      <div className="border-t border-slate-850 pt-3">
+                      <div className="border-t border-slate-700 pt-3">
                         <span className="text-[9px] font-extrabold tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded uppercase">Script Body & B-Roll Cues</span>
                         <div className="text-xs text-slate-300 leading-relaxed mt-2 whitespace-pre-wrap font-medium">
                           {formatScriptBody(analysis.script_body)}
                         </div>
                       </div>
 
-                      <div className="border-t border-slate-850 pt-3">
+                      <div className="border-t border-slate-700 pt-3">
                         <span className="text-[9px] font-extrabold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded uppercase">Growth call to action</span>
                         <p className="text-xs font-bold text-emerald-400 mt-1.5 pl-3 border-l-2 border-emerald-500/60">
                           {analysis.call_to_action}
@@ -713,19 +714,19 @@ export default function ResearchPage() {
                   <div className="space-y-4">
                     
                     {/* Duration filter options */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-850 pb-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700 pb-2.5">
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                         <Globe size={12} className="text-emerald-400" /> Web Crawler Source Clips
                       </p>
                       
-                      <div className="flex gap-1 bg-slate-950/60 p-0.5 rounded-lg border border-slate-850">
+                      <div className="flex gap-1 bg-slate-950/60 p-0.5 rounded-lg border border-slate-700">
                         {["all", "shorts", "long"].map((filter) => (
                           <button
                             key={filter}
                             onClick={() => handleVideoTypeChange(filter)}
                             className={cn(
                               "text-[9px] font-extrabold px-2.5 py-1 rounded uppercase transition-all",
-                              videoType === filter ? "bg-slate-800 text-slate-200" : "text-slate-500 hover:text-slate-350"
+                              videoType === filter ? "bg-slate-800 text-slate-200" : "text-slate-500 hover:text-slate-300"
                             )}
                           >
                             {filter === "all" ? "All Video" : filter === "shorts" ? "Shorts (<60s)" : "Long (>60s)"}
@@ -749,7 +750,7 @@ export default function ResearchPage() {
                         {videos.map((vid, idx) => (
                           <div
                             key={idx}
-                            className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-slate-950/40 border border-slate-850 rounded-xl p-3.5 transition-all hover:bg-slate-950/70 hover:border-slate-700/60"
+                            className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-slate-950/40 border border-slate-700 rounded-xl p-3.5 transition-all hover:bg-slate-950/70 hover:border-slate-700/60"
                           >
                             <div className="flex-1 min-w-0">
                               <h4 className="text-xs font-bold text-slate-100 truncate mb-1">

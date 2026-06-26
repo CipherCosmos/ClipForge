@@ -5,7 +5,7 @@ import { useDispatch, useSelector } from "react-redux"
 import { AppDispatch, RootState } from "@/store/store"
 import { setCredentials } from "@/store/authSlice"
 import { authAPI } from "@/lib/api"
-import { Sparkles, Loader2, AlertCircle, WifiOff } from "lucide-react"
+import { Sparkles, Loader2, AlertCircle, WifiOff, ArrowLeft } from "lucide-react"
 
 export function AuthGate() {
   const dispatch = useDispatch<AppDispatch>()
@@ -16,6 +16,8 @@ export function AuthGate() {
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [networkError, setNetworkError] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
+  const [forgotSent, setForgotSent] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,6 +31,9 @@ export function AuthGate() {
         token: res.data.access_token,
         user: res.data.user,
       }))
+      if (res.data.refresh_token) {
+        localStorage.setItem("refresh_token", res.data.refresh_token)
+      }
     } catch (err: any) {
       if (err.code === "ERR_NETWORK" || err.message === "Network Error") {
         setNetworkError(true)
@@ -39,6 +44,57 @@ export function AuthGate() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!email.trim()) { setError("Enter your email first"); return }
+    setSubmitting(true)
+    try {
+      await authAPI.forgotPassword(email)
+      setForgotSent(true)
+      setError("")
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to send reset email")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (showForgot) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface p-6">
+        <div className="w-full max-w-sm animate-fade-in">
+          <div className="card p-6">
+            <button onClick={() => { setShowForgot(false); setForgotSent(false); setError("") }} className="btn-ghost -ml-2 mb-4">
+              <ArrowLeft size={16} className="mr-1" /> Back
+            </button>
+            <h2 className="text-lg font-bold text-white mb-2">Reset Password</h2>
+            <p className="text-sm text-slate-400 mb-6">Enter your email and we&apos;ll send you a reset link.</p>
+            {forgotSent ? (
+              <div className="rounded-lg border border-emerald-800/50 bg-emerald-900/10 p-4 text-sm text-emerald-400 space-y-2">
+                <p>Reset link sent! Check your email.</p>
+                <p className="text-emerald-300/70 text-xs">In development, check the server console for the reset link, or use: <code className="rounded bg-emerald-900/20 px-1">/reset-password?token=&lt;token&gt;</code></p>
+              </div>
+            ) : (
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <input type="email" placeholder="you@example.com" value={email}
+                  onChange={(e) => setEmail(e.target.value)} required className="input" />
+                {error && (
+                  <div className="flex items-start gap-2 rounded-lg border border-red-800/50 bg-red-900/10 px-4 py-3 text-sm text-red-400">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+                <button type="submit" disabled={submitting} className="btn-primary w-full">
+                  {submitting ? "Sending..." : "Send Reset Link"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -116,7 +172,15 @@ export function AuthGate() {
                 className="input"
                 autoComplete={mode === "login" ? "current-password" : "new-password"}
               />
-              <p className="mt-1 text-xs text-slate-500">At least 8 characters</p>
+              <div className="mt-1 flex items-center justify-between">
+                <p className="text-xs text-slate-500">At least 8 characters</p>
+                {mode === "login" && (
+                  <button type="button" onClick={() => setShowForgot(true)}
+                    className="text-xs text-brand-400 hover:text-brand-300">
+                    Forgot password?
+                  </button>
+                )}
+              </div>
             </div>
 
             {error && !networkError && (
@@ -144,7 +208,7 @@ export function AuthGate() {
 
           {mode === "login" && (
             <p className="mt-4 text-center text-xs text-slate-500">
-              Test: <code className="rounded bg-slate-800 px-1.5 py-0.5">test@clipforge.dev</code> / <code className="rounded bg-slate-800 px-1.5 py-0.5">password123</code>
+              Use your registered email and password to sign in.
             </p>
           )}
         </div>

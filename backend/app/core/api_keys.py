@@ -1,12 +1,11 @@
 """API key authentication and management with names and expiration."""
 import hashlib
-import secrets
 import logging
-import uuid as uuid_mod
-from datetime import datetime, timezone, timedelta
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
-from fastapi import Depends, HTTPException, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from fastapi.security import HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 

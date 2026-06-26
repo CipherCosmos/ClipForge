@@ -26,6 +26,13 @@ export function formatDate(dateStr: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
+export function formatTime(seconds: number): string {
+  if (seconds === 0) return "0:00"
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toFixed(2).padStart(5, "0")}`
+}
+
 export function formatScore(score: number): string {
   return (score * 100).toFixed(0)
 }

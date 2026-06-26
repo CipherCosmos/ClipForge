@@ -6,14 +6,17 @@ import { RootState, AppDispatch } from "@/store/store"
 import { logout } from "@/store/authSlice"
 import { cn } from "@/lib/utils"
 import {
-  LayoutDashboard, PlusCircle, LogOut, Sparkles, Menu, X, Search, Key, Settings
+  LayoutDashboard, PlusCircle, LogOut, Sparkles, Menu, X, Search, Key, Settings, Sun, Moon, Calendar, CreditCard
 } from "lucide-react"
 import { useState, useEffect } from "react"
+import { authAPI } from "@/lib/api"
 
 const NAV_ITEMS = [
   { href: "/app", label: "Dashboard", icon: LayoutDashboard },
   { href: "/app/new", label: "New Project", icon: PlusCircle },
   { href: "/app/research", label: "Research & Trends", icon: Search },
+  { href: "/app/schedule", label: "Schedule", icon: Calendar },
+  { href: "/app/billing", label: "Billing", icon: CreditCard },
   { href: "/app/keys", label: "API Keys", icon: Key },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ]
@@ -29,10 +32,33 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const dispatch = useDispatch<AppDispatch>()
   const { user } = useSelector((s: RootState) => s.auth)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [theme, setTheme] = useState<"dark" | "light">("dark")
 
   useEffect(() => {
     setMobileOpen(false)
   }, [pathname])
+
+  useEffect(() => {
+    const stored = localStorage.getItem("theme") as "dark" | "light" | null
+    if (stored) {
+      setTheme(stored)
+      document.documentElement.classList.toggle("dark", stored === "dark")
+    } else {
+      document.documentElement.classList.add("dark")
+    }
+  }, [])
+
+  const handleToggleTheme = async () => {
+    const newTheme = theme === "dark" ? "light" : "dark"
+    setTheme(newTheme)
+    localStorage.setItem("theme", newTheme)
+    document.documentElement.classList.toggle("dark", newTheme === "dark")
+    try {
+      await authAPI.updateSettings({ theme: newTheme })
+    } catch (e) {
+      console.warn("Failed to persist theme preference:", e)
+    }
+  }
 
   const handleLogout = () => {
     dispatch(logout())
@@ -80,10 +106,24 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         })}
       </nav>
 
-      <div className="border-t border-slate-800 px-3 py-4">
+      <div className="border-t border-slate-800 px-3 py-4 space-y-2">
         {!collapsed && user && (
           <div className="mb-2 truncate px-3 text-xs text-slate-500">{user.email}</div>
         )}
+
+        <button
+          onClick={handleToggleTheme}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-slate-800/50 hover:text-slate-200"
+          title={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
+        >
+          {theme === "dark" ? (
+            <Sun size={18} className="shrink-0 text-amber-400" />
+          ) : (
+            <Moon size={18} className="shrink-0 text-slate-400" />
+          )}
+          {!collapsed && (theme === "dark" ? "Light Mode" : "Dark Mode")}
+        </button>
+
         <button
           onClick={handleLogout}
           className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-400 transition-all duration-200 hover:bg-red-900/20 hover:text-red-400"
@@ -98,7 +138,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   return (
     <>
-      {/* Desktop sidebar */}
       <aside
         className={cn(
           "fixed left-0 top-0 z-40 hidden h-screen flex-col border-r border-slate-800 bg-surface transition-all duration-300 lg:flex",
@@ -108,7 +147,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {sidebarContent}
       </aside>
 
-      {/* Mobile header + drawer */}
       <div className="fixed left-0 top-0 z-50 flex h-14 w-full items-center border-b border-slate-800 bg-surface px-4 lg:hidden">
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
@@ -124,7 +162,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </div>
       </div>
 
-      {/* Mobile drawer overlay */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/50 lg:hidden"
@@ -132,7 +169,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         />
       )}
 
-      {/* Mobile drawer */}
       <aside
         className={cn(
           "fixed left-0 top-0 z-50 flex h-screen w-60 flex-col border-r border-slate-800 bg-surface transition-transform duration-300 lg:hidden",

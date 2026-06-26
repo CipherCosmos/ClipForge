@@ -10,49 +10,8 @@ from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
 from app.services.storage import download_file
 from app.services.transcription import transcribe_audio
 from app.workers.celery_app import SyncSessionLocal, celery_app
-import threading
-import time
-import subprocess
 
 logger = logging.getLogger(__name__)
-
-class TranscriptionProgressThread(threading.Thread):
-    def __init__(self, video_id: str, audio_path: str):
-        super().__init__()
-        self.video_id = video_id
-        self.audio_path = audio_path
-        self.stop_event = threading.Event()
-        self.duration_sec = self._get_duration()
-
-    def _get_duration(self) -> float:
-        try:
-            res = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path],
-                capture_output=True, text=True, timeout=10
-            )
-            return float(res.stdout.strip())
-        except Exception:
-            return 300.0
-
-    def run(self):
-        # MLX Whisper transcribes roughly 20x real-time on Apple Silicon
-        est_duration = max(15.0, self.duration_sec / 20.0)
-        start_time = time.time()
-        
-        while not self.stop_event.is_set():
-            elapsed = time.time() - start_time
-            if elapsed < est_duration:
-                p = 0.1 + 0.8 * (elapsed / est_duration)
-            else:
-                p = 0.9
-            
-            p = round(p, 3)
-            try:
-                broadcast_sync(self.video_id, "transcription", p, "running", f"Transcribing audio ({int(p*100)}%)")
-            except Exception:
-                pass
-                
-            self.stop_event.wait(1.5)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60, acks_late=True)
@@ -92,19 +51,19 @@ def run_transcription(self, video_id: str):
             if video.source_url.startswith("http://") or video.source_url.startswith("https://"):
                 logger.info("Downloading external video %s for transcription", video_id)
                 broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading from YouTube (this may take a while)...")
-                
-                from app.services.video import download_from_url, get_video_duration
+
                 from app.services.storage import upload_file
-                
+                from app.services.video import download_from_url, get_video_duration
+
                 tmp_path = download_from_url(video.source_url)
-                
+
                 try:
                     duration = get_video_duration(tmp_path)
                     if duration:
                         video.duration = duration
                 except Exception:
                     pass
-                
+
                 object_name = f"videos/{video.user_id}/{uuid.uuid4()}.mp4"
                 upload_file(tmp_path, object_name)
                 video.source_url = object_name
@@ -118,17 +77,10 @@ def run_transcription(self, video_id: str):
                 download_file(video.source_url, tmp_path)
 
             logger.info("Starting transcription for video %s", video_id)
-            broadcast_sync(video_id, "transcription", 0.1, "running", "Warming up Whisper ASR")
-            
-            progress_thread = TranscriptionProgressThread(video_id, tmp_path)
-            progress_thread.start()
+            broadcast_sync(video_id, "transcription", 0.1, "running", "Running Whisper ASR")
 
-            try:
-                result = transcribe_audio(tmp_path)
-            finally:
-                progress_thread.stop_event.set()
-                progress_thread.join()
-                
+            result = transcribe_audio(tmp_path)
+
             broadcast_sync(video_id, "transcription", 0.95, "running", "Chunking segments")
             whisper_segments = result["segments"]
             language = result.get("language", "en")
@@ -218,6 +170,13 @@ def run_transcription(self, video_id: str):
 
             session.commit()
             logger.info("Transcription complete for video %s", video_id)
+
+            from app.services.webhooks import fire_event_sync
+            fire_event_sync(video_id, "transcription.completed", {
+                "status": "completed",
+                "language": language,
+                "segments_count": len(segments),
+            })
         else:
             session.commit()
             logger.info("Smart Resume: transcription already complete for video %s, skipping", video_id)
@@ -246,12 +205,13 @@ def run_transcription(self, video_id: str):
             else:
                 logger.info("Smart Resume: highlight job status=%s for video %s, defaulting to NLP + Scene Detect",
                             highlight_job.status if highlight_job else "None", video_id)
-            from celery import chord
             from app.workers.nlp import run_nlp
             from app.workers.scene_detect import run_scene_detect
-            from app.workers.join_worker import run_join_and_render
 
-            chord([run_nlp.s(video_id), run_scene_detect.s(video_id)])(run_join_and_render.s(video_id))
+            # Enqueue NLP and scene detect independently (no fragile chord)
+            # Each will check if the other is done before triggering render
+            run_nlp.delay(video_id)
+            run_scene_detect.delay(video_id)
 
     except Exception as exc:
         logger.exception("Transcription failed for video %s", video_id)
