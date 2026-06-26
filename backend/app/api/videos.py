@@ -20,10 +20,11 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 def _video_to_response(video: Video) -> VideoResponse:
     resp = VideoResponse.model_validate(video)
-    try:
-        resp.source_url = get_presigned_url(video.source_url)
-    except Exception:
-        pass
+    if video.source_url and not video.source_url.startswith("http"):
+        try:
+            resp.source_url = get_presigned_url(video.source_url)
+        except Exception:
+            pass
     if video.segments:
         resp.viral_score = max(
             (s.get("viral_score", 0.0) for s in video.segments if isinstance(s, dict)),

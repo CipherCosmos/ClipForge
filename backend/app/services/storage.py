@@ -140,19 +140,25 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
 
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
-        resp = _supabase_request(
-            "POST",
-            f"object/sign/{bucket}/{object_name}",
-            json={"expiresIn": min(expires, 3600)},
-        )
-        if resp.status_code != 200:
-            logger.warning("Failed to sign URL on Supabase: %s", resp.text)
-            url = f"{settings.SUPABASE_STORAGE_URL}/object/public/{bucket}/{object_name}"
-        else:
-            data = resp.json()
-            from urllib.parse import urlparse
-            parsed = urlparse(settings.SUPABASE_STORAGE_URL)
-            url = f"{parsed.scheme}://{parsed.netloc}{data['signedURL']}"
+        for attempt in range(3):
+            resp = _supabase_request(
+                "POST",
+                f"object/sign/{bucket}/{object_name}",
+                json={"expiresIn": min(expires, 3600)},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                from urllib.parse import urlparse
+                parsed = urlparse(settings.SUPABASE_STORAGE_URL)
+                url = f"{parsed.scheme}://{parsed.netloc}{data['signedURL']}"
+                _presigned_cache[object_name] = (url, now)
+                return url
+            if attempt < 2 and resp.status_code in (404, 429):
+                time.sleep(0.5 * (attempt + 1))
+                continue
+            break
+        logger.warning("Failed to sign URL on Supabase: %s", resp.text)
+        url = f"{settings.SUPABASE_STORAGE_URL}/object/public/{bucket}/{object_name}"
     else:
         client = get_client()
         url = client.presigned_get_object(
