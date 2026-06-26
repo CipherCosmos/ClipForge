@@ -50,12 +50,12 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(keys_router)
+app.include_router(exports_router)  # BEFORE videos_router (more specific paths)
 app.include_router(videos_router)
 app.include_router(clips_router)
 app.include_router(jobs_router)
 app.include_router(ws_router)
 app.include_router(research_router)
-app.include_router(exports_router)
 app.include_router(branding_router)
 app.include_router(publish_router)
 
