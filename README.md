@@ -21,22 +21,22 @@ Upload any video (or paste a YouTube URL) → ClipForge automatically transcribe
 ## Pipeline Overview
 
 ```mermaid
-flowchart LR
-    A["Upload / URL"] --> B["Transcribe (Whisper)"]
-    B --> C["Segment into ~3s chunks"]
-    C --> D1["Viral Scoring (Groq LLM)"]
-    C --> D2["Scene Detect (PySceneDetect)"]
-    C --> D3["Audio Analysis"]
-    C --> D4["Speaker Diarization"]
-    D1 --> E["Join + Merge Scores"]
+graph LR
+    A[Upload URL] --> B[Transcribe Whisper]
+    B --> C[Segment ~3s chunks]
+    C --> D1[Viral Scoring LLM]
+    C --> D2[Scene Detect]
+    C --> D3[Audio Analysis]
+    C --> D4[Diarization]
+    D1 --> E[Join Merge]
     D2 --> E
     D3 --> E
     D4 --> E
-    E --> F["Select Top Segments"]
-    F --> G["Render Clips (FFmpeg)"]
-    G --> H["Generate Metadata"]
-    H --> I["Export / Download"]
-    G --> J["Multi-Highlight Compilation"]
+    E --> F[Select Top]
+    F --> G[Render FFmpeg]
+    G --> H[Metadata]
+    H --> I[Export]
+    G --> J[Compilation]
     J --> I
 ```
 
@@ -47,45 +47,40 @@ flowchart LR
 ## Architecture
 
 ```mermaid
-flowchart TB
-    subgraph Browser["Browser (Next.js localhost:3000)"]
-        NEXT[("Next.js Frontend")]
+graph TB
+    subgraph Browser
+        NEXT[Next.js Frontend]
     end
-
-    subgraph API["API Server (FastAPI localhost:8000)"]
+    subgraph API
         FA[FastAPI]
-        WS["WebSocket /ws/progress/{id}"]
+        WS[WebSocket]
     end
-
-    subgraph Storage["Storage"]
+    subgraph Storage
         MINIO[MinIO S3]
         PG[PostgreSQL]
-        RD[Redis Queue]
+        RD[Redis]
     end
-
-    subgraph Worker["Celery Worker"]
-        T["Transcription (Whisper)"]
-        N["NLP Scoring (Groq LLM)"]
-        SD["Scene Detect + Audio"]
-        J["Join + Merge"]
-        R["Render (FFmpeg)"]
+    subgraph Worker
+        T[Transcription]
+        N[NLP Scoring]
+        SD[Scene Detect]
+        J[Join Merge]
+        R[Render]
     end
-
-    subgraph Cloud["Cloud GPU (Optional)"]
-        GROQ["Groq API (Whisper + Llama)"]
+    subgraph Cloud
+        GROQ[Groq API]
     end
-
-    NEXT -- HTTP + WS --> FA
-    FA -- S3 API --> MINIO
-    FA -- SQL --> PG
-    FA -- Tasks --> RD
-    RD -- Consume --> T
-    T -- Chord --> N
-    T -- Chord --> SD
+    NEXT --> FA
+    FA --> MINIO
+    FA --> PG
+    FA --> RD
+    RD --> T
+    T --> N
+    T --> SD
     N --> J
     SD --> J
     J --> R
-    R -- Upload --> MINIO
+    R --> MINIO
     T -.-> GROQ
     N -.-> GROQ
     FA <--> WS
@@ -115,17 +110,17 @@ flowchart TB
 ### Viral Score Formula
 
 ```mermaid
-flowchart TD
-    H["hook_score (0.25)"] --> FINAL
-    E["emotion_intensity (0.20)"] --> FINAL
-    EN["engagement_potential (0.15)"] --> FINAL
-    K["keyword_density (0.10)"] --> FINAL
-    SC["scene_change_intensity (0.10)"] --> FINAL
-    AE["audio_event_score (0.10)"] --> FINAL
-    AEG["audio_energy (0.05)"] --> FINAL
-    SP["speaker_confidence (0.05)"] --> FINAL
-    FINAL["Base Score"] --> BOOST["x trend_boost (1-3x)"]
-    BOOST --> RESULT["Final Viral Score"]
+graph TD
+    H[hook 0.25] --> F
+    E[emotion 0.20] --> F
+    EN[engage 0.15] --> F
+    K[keyword 0.10] --> F
+    SC[scene 0.10] --> F
+    AE[audio ev 0.10] --> F
+    AEG[energy 0.05] --> F
+    SP[speaker 0.05] --> F
+    F[Base Score] --> B[trend boost 1-3x]
+    B --> R[Final Score]
 ```
 
 Then multiplied by `trend_boost` (1-3×) if segment contains trending keywords.
