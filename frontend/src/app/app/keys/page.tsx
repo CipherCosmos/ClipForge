@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { ArrowLeft, Key, Copy, Check, AlertCircle, Trash2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { authAPI } from "@/lib/api"
@@ -9,8 +9,20 @@ export default function ApiKeysPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [apiKey, setApiKey] = useState("")
+  const [hasExistingKey, setHasExistingKey] = useState(false)
+  const [checking, setChecking] = useState(true)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authAPI.getApiKeyStatus()
+        setHasExistingKey(res.data.has_key)
+      } catch {}
+      setChecking(false)
+    })()
+  }, [])
 
   const generateKey = async () => {
     setLoading(true)
@@ -18,6 +30,7 @@ export default function ApiKeysPage() {
     try {
       const res = await authAPI.generateApiKey()
       setApiKey(res.data.api_key)
+      setHasExistingKey(true)
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to generate key")
     } finally {
@@ -31,12 +44,15 @@ export default function ApiKeysPage() {
     try {
       await authAPI.revokeApiKey()
       setApiKey("")
+      setHasExistingKey(false)
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to revoke key")
     } finally {
       setLoading(false)
     }
   }
+
+  if (checking) return <div className="flex items-center justify-center py-20 text-slate-400">Loading...</div>
 
   return (
     <div className="animate-fade-in space-y-8 max-w-2xl mx-auto">
@@ -83,11 +99,29 @@ export default function ApiKeysPage() {
               {loading ? "Revoking..." : "Revoke API Key"}
             </button>
           </div>
+        ) : hasExistingKey ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400">
+              You already have an active API key. Generate a new one to replace it (the old key will stop working).
+            </p>
+            <button onClick={generateKey} disabled={loading} className="btn-primary w-full py-2.5">
+              {loading ? "Generating..." : "Regenerate API Key"}
+            </button>
+          </div>
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-slate-400">
               API keys allow you to upload, transcribe, and export videos programmatically without using the web interface.
             </p>
+            <div className="rounded-lg bg-slate-800/50 border border-slate-700 p-4 space-y-2">
+              <p className="text-sm font-medium text-white">Example usage:</p>
+              <pre className="text-xs text-slate-300 bg-slate-950 rounded p-3 overflow-x-auto">
+{`curl -X POST http://localhost:8000/api/videos/import \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"source_url":"https://youtube.com/watch?v=...","platform":"youtube_shorts"}'`}
+              </pre>
+            </div>
             <button onClick={generateKey} disabled={loading} className="btn-primary w-full py-2.5">
               {loading ? "Generating..." : "Generate API Key"}
             </button>

@@ -13,6 +13,15 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/keys", tags=["api_keys"])
 
+@router.get("")
+async def get_api_key_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    return {"has_key": bool(user and user.api_key_hash)}
+
 @router.post("/generate")
 async def create_api_key(
     current_user: User = Depends(get_current_user),

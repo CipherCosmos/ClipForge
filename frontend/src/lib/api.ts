@@ -18,6 +18,7 @@ export const authAPI = {
   register: (email: string, password: string) => api.post("/auth/register", { email, password }),
   login: (email: string, password: string) => api.post("/auth/login", { email, password }),
   me: () => api.get("/auth/me"),
+  getApiKeyStatus: () => api.get("/keys"),
   generateApiKey: () => api.post("/keys/generate"),
   revokeApiKey: () => api.delete("/keys/revoke"),
 }
