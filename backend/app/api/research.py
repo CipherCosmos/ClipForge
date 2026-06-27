@@ -613,15 +613,8 @@ async def import_trend(
         await db.commit()
         await db.refresh(video)
 
-        job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
-        job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
-        job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
-        db.add_all([job1, job2, job3])
-        await db.commit()
-        await db.refresh(video)
-
-        from app.workers.transcription import run_transcription
-        run_transcription.delay(str(video.id))
+        from app.services.pipeline import start_pipeline
+        await start_pipeline(db, video)
 
         return await _video_to_response(video, db)
     except HTTPException:

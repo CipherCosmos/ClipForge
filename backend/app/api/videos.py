@@ -225,15 +225,8 @@ async def upload_video(
     await db.commit()
     await db.refresh(video)
 
-    job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
-    job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
-    job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
-    db.add_all([job1, job2, job3])
-    await db.commit()
-    await db.refresh(video)
-
-    from app.workers.transcription import run_transcription
-    run_transcription.delay(str(video.id))
+    from app.services.pipeline import start_pipeline
+    await start_pipeline(db, video)
 
     return await _video_to_response(video, db)
 
@@ -270,15 +263,8 @@ async def import_video(
     await db.commit()
     await db.refresh(video)
 
-    job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
-    job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
-    job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
-    db.add_all([job1, job2, job3])
-    await db.commit()
-    await db.refresh(video)
-
-    from app.workers.transcription import run_transcription
-    run_transcription.delay(str(video.id))
+    from app.services.pipeline import start_pipeline
+    await start_pipeline(db, video)
 
     return await _video_to_response(video, db)
 
@@ -322,13 +308,8 @@ async def import_batch_videos(
         db.add(video)
         await db.flush()
 
-        job1 = Job(video_id=video.id, type=JobTypeEnum.TRANSCRIPTION, status=JobStatusEnum.QUEUED)
-        job2 = Job(video_id=video.id, type=JobTypeEnum.HIGHLIGHT, status=JobStatusEnum.QUEUED)
-        job3 = Job(video_id=video.id, type=JobTypeEnum.RENDER, status=JobStatusEnum.QUEUED)
-        db.add_all([job1, job2, job3])
-
-        from app.workers.transcription import run_transcription
-        run_transcription.delay(str(video.id))
+        from app.services.pipeline import start_pipeline
+        await start_pipeline(db, video)
 
         created.append({"id": str(video.id), "url": url, "cloned": False})
 
@@ -384,6 +365,8 @@ async def get_video(
 @router.post("/{video_id}/reprocess", response_model=VideoResponse)
 async def reprocess_video(
     video_id: uuid.UUID,
+    force_retranscribe: bool = False,
+    force_rehighlight: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -394,45 +377,16 @@ async def reprocess_video(
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
-    from app.models.clip import Clip
-
-    # Reset video metadata to force complete recalculation
-    video.transcript = None
-    video.segments = None
-    video.language = None
-
-    await db.execute(delete(Clip).where(Clip.video_id == video_id))
-    await db.execute(delete(Job).where(Job.video_id == video_id))
-
-    video.status = VideoStatusEnum.UPLOADED
-
-    job1 = Job(
-        video_id=video.id,
-        type=JobTypeEnum.TRANSCRIPTION,
-        status=JobStatusEnum.QUEUED,
-        progress=0.0
-    )
-    job2 = Job(
-        video_id=video.id,
-        type=JobTypeEnum.HIGHLIGHT,
-        status=JobStatusEnum.QUEUED,
-        progress=0.0
-    )
-    job3 = Job(
-        video_id=video.id,
-        type=JobTypeEnum.RENDER,
-        status=JobStatusEnum.QUEUED,
-        progress=0.0
-    )
-    db.add_all([job1, job2, job3])
-    await db.commit()
-    await db.refresh(video)
-
-    from app.workers.transcription import run_transcription
+    from app.services.pipeline import start_pipeline
     try:
-        run_transcription.delay(str(video.id))
+        await start_pipeline(
+            db,
+            video,
+            force_transcribe=force_retranscribe,
+            force_highlights=force_rehighlight,
+        )
     except Exception as e:
-        logger.error("Failed to enqueue transcription task: %s", e)
+        logger.error("Failed to enqueue pipeline task: %s", e)
         raise HTTPException(
             status_code=503,
             detail="Processing queue unavailable. Make sure Celery and Redis are running."

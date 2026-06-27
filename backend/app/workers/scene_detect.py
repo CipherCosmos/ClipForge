@@ -158,38 +158,49 @@ def run_scene_detect(self, video_id: str):
             job.progress = 0.5
             session.commit()
 
-        # Speaker diarization
-        try:
-            logger.info("Running speaker diarization for video %s", video_id)
-            diarization = diarize_audio(audio_path)
-            segments = assign_speaker_scores(segments, diarization)
-            logger.info(
-                "Diarization complete: %d speakers detected",
-                len(set(d["speaker"] for d in diarization)) if diarization else 0,
-            )
-        except Exception as e:
-            logger.warning("Diarization failed for video %s: %s", video_id, e)
+        # Concurrently execute diarization, audio emotion/event analysis, and prosody extraction
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _run_diarization():
+            try:
+                logger.info("Running speaker diarization for video %s", video_id)
+                return diarize_audio(audio_path)
+            except Exception as e:
+                logger.warning("Diarization failed for video %s: %s", video_id, e)
+                return []
+
+        def _run_emotions():
+            try:
+                logger.info("Running single-pass audio emotion & event analysis for video %s", video_id)
+                return analyze_full_audio_emotions(audio_path)
+            except Exception as e:
+                logger.warning("SenseVoice full analysis failed for video %s: %s", video_id, e)
+                return {}
+
+        def _run_prosody():
+            try:
+                logger.info("Extracting full audio prosody features for video %s", video_id)
+                return extract_full_audio_features(audio_path)
+            except Exception as e:
+                logger.warning("Full audio prosody extraction failed for video %s: %s", video_id, e)
+                return {}
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fut_diarize = executor.submit(_run_diarization)
+            fut_emotions = executor.submit(_run_emotions)
+            fut_prosody = executor.submit(_run_prosody)
+
+            diarization = fut_diarize.result()
+            full_emotions_events = fut_emotions.result()
+            prosody_features = fut_prosody.result()
+
+        segments = assign_speaker_scores(segments, diarization)
+        if not diarization:
             for seg in segments:
                 seg["speaker_confidence"] = 0.0
 
-        # Single-pass audio emotion & event analysis on the full audio track
-        logger.info("Running single-pass audio emotion & event analysis for video %s", video_id)
-        try:
-            full_emotions_events = analyze_full_audio_emotions(audio_path)
-            all_emotions = full_emotions_events.get("emotions", [])
-            all_events = full_emotions_events.get("events", [])
-        except Exception as e:
-            logger.warning("SenseVoice full analysis failed for video %s: %s", video_id, e)
-            all_emotions = []
-            all_events = []
-
-        # Single-pass full audio prosody feature extraction
-        logger.info("Extracting full audio prosody features for video %s", video_id)
-        try:
-            prosody_features = extract_full_audio_features(audio_path)
-        except Exception as e:
-            logger.warning("Full audio prosody extraction failed for video %s: %s", video_id, e)
-            prosody_features = {}
+        all_emotions = full_emotions_events.get("emotions", [])
+        all_events = full_emotions_events.get("events", [])
 
         # Map emotion + events + prosody per segment
         total = len(segments)
@@ -272,6 +283,7 @@ def run_scene_detect(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
+                video.transcript = {"error": f"Scene detection failed: {exc}"}
             job = session.query(Job).filter(
                 and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
             ).first()

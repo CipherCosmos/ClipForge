@@ -144,26 +144,14 @@ async def regenerate_transcript(
 ):
     video = await _get_video(video_id, current_user.id, db)
 
-    video.transcript = None
-    video.segments = None
-    video.language = None
-    flag_modified(video, "transcript")
-    flag_modified(video, "segments")
+    from app.services.pipeline import start_pipeline
+    await start_pipeline(db, video, force_transcribe=True)
 
-    job = Job(
-        video_id=video.id,
-        type=JobTypeEnum.TRANSCRIPTION,
-        status=JobStatusEnum.QUEUED,
-        progress=0.0,
+    result = await db.execute(
+        select(Job).where(Job.video_id == video.id, Job.type == JobTypeEnum.TRANSCRIPTION)
     )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    from app.workers.transcription import run_transcription
-    run_transcription.delay(str(video.id))
-
-    return {"job_id": str(job.id)}
+    job = result.scalar_one_or_none()
+    return {"job_id": str(job.id) if job else None}
 
 
 @router.get("/export-srt")

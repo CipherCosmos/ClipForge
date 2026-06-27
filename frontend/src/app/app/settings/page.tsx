@@ -32,6 +32,7 @@ export default function SettingsPage() {
   const [captionStyle, setCaptionStyle] = useState("classic")
   const [musicTrack, setMusicTrack] = useState("")
   const [researchLocation, setResearchLocation] = useState("US")
+  const [enableModeration, setEnableModeration] = useState(true)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(true)
@@ -46,6 +47,7 @@ export default function SettingsPage() {
         setCaptionStyle(s.caption_style || "classic")
         setMusicTrack(s.music_track || "")
         setResearchLocation(s.research_location || "US")
+        setEnableModeration(s.enable_moderation !== false)
       } catch (e) {
         setError("Failed to load settings")
       }
@@ -63,6 +65,7 @@ export default function SettingsPage() {
         caption_style: captionStyle,
         music_track: musicTrack,
         research_location: researchLocation,
+        enable_moderation: enableModeration,
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -178,6 +181,23 @@ export default function SettingsPage() {
                   {/* Subtitle styles */}
                   <div className="space-y-2 pt-2 border-t border-border">
                     <CaptionStyleSelector value={captionStyle} onChange={setCaptionStyle} />
+                  </div>
+
+                  {/* Content Moderation */}
+                  <div className="space-y-3 pt-4 border-t border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Content Moderation Gate</Label>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Skip clips containing profanity, violence, or sensitive keywords automatically</p>
+                    </div>
+                    <Select value={enableModeration ? "true" : "false"} onValueChange={(v) => setEnableModeration(v === "true")}>
+                      <SelectTrigger className="w-full sm:w-[170px] bg-background border-border text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="true">Enabled (Skip Flagged)</SelectItem>
+                        <SelectItem value="false">Disabled (Show All)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </CardContent>
               </Card>

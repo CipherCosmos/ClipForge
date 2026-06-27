@@ -20,6 +20,7 @@ DEFAULT_PREFERENCES = {
     "music_track": "",
     "research_location": "US",
     "theme": "dark",
+    "enable_moderation": True,
 }
 
 @router.get("")

@@ -119,9 +119,14 @@ export default function VideoDetailPage() {
 
   // Determine overlay status
   const overlayStatus = progressError ? "failed"
+    : video?.status === "failed" ? "failed"
     : completed ? "completed"
     : isProcessing ? "processing"
     : "completed"
+
+  const videoErrorMsg = (video?.status === "failed" && video?.transcript && typeof video.transcript === "object" && "error" in video.transcript)
+    ? String(video.transcript.error)
+    : ""
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -248,7 +253,7 @@ export default function VideoDetailPage() {
               progress={progressState.progress}
               message={progressState.message}
               status={overlayStatus}
-              error={progressError}
+              error={progressError || videoErrorMsg}
             />
           </div>
         </div>

@@ -25,7 +25,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
-    worker_prefetch_multiplier=4,
+    worker_prefetch_multiplier=1,
     imports=[
         "app.workers.transcription",
         "app.workers.nlp",

@@ -207,30 +207,43 @@ def run_nlp(self, video_id: str):
         llm_total = len(llm_candidates)
         logger.info("Running Ollama LLM scoring on %d of %d segments", llm_total, total)
 
-        last_progress = 0.0
+        # Prepare all batches
+        batches = []
         for batch_start in range(0, llm_total, BATCH_SIZE):
             batch_candidates = llm_candidates[batch_start:batch_start + BATCH_SIZE]
             batch_segments = [segments[idx] for idx, _ in batch_candidates]
             texts = [s.get("text", "") for s in batch_segments]
-            batch_scores = _call_llm_batch(texts, video.language)
+            batches.append((batch_segments, texts))
 
-            for j, seg in enumerate(batch_segments):
-                scores = batch_scores[j] if j < len(batch_scores) else {}
-                seg["hook_score"] = scores.get("hook_score", 0.0)
-                seg["emotion_intensity"] = scores.get("emotion_intensity", 0.0)
-                seg["engagement_potential"] = scores.get("engagement_potential", 0.0)
-                seg["keyword_density"] = scores.get("keyword_density", 0.0)
-                seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
-                seg["viral_score"] = calculate_viral_score(seg)
+        # Call LLM in parallel
+        from concurrent.futures import ThreadPoolExecutor
 
-            done = min(batch_start + BATCH_SIZE, llm_total)
-            job_progress = done / max(llm_total, 1)
-            broadcast_sync(video_id, "nlp", job_progress, "running", f"Scored {done}/{llm_total} candidates")
-            if job:
-                from sqlalchemy import update
-                capped = min(0.99, job_progress * 0.4 + 0.5)
-                session.execute(update(Job).where(Job.id == job.id).values(progress=capped))
-                session.commit()
+        max_workers = min(4, len(batches) or 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_call_llm_batch, texts, video.language)
+                for _, texts in batches
+            ]
+
+            for i, (batch_segments, _) in enumerate(batches):
+                batch_scores = futures[i].result()
+                for j, seg in enumerate(batch_segments):
+                    scores = batch_scores[j] if j < len(batch_scores) else {}
+                    seg["hook_score"] = scores.get("hook_score", 0.0)
+                    seg["emotion_intensity"] = scores.get("emotion_intensity", 0.0)
+                    seg["engagement_potential"] = scores.get("engagement_potential", 0.0)
+                    seg["keyword_density"] = scores.get("keyword_density", 0.0)
+                    seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
+                    seg["viral_score"] = calculate_viral_score(seg)
+
+                done = min((i + 1) * BATCH_SIZE, llm_total)
+                job_progress = done / max(llm_total, 1)
+                broadcast_sync(video_id, "nlp", job_progress, "running", f"Scored {done}/{llm_total} candidates")
+                if job:
+                    from sqlalchemy import update
+                    capped = min(0.99, job_progress * 0.4 + 0.5)
+                    session.execute(update(Job).where(Job.id == job.id).values(progress=capped))
+                    session.commit()
 
         video.segments = segments
         from sqlalchemy.orm.attributes import flag_modified
@@ -269,6 +282,7 @@ def run_nlp(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
+                video.transcript = {"error": f"NLP analysis failed: {exc}"}
             session.commit()
         except Exception:
             session.rollback()

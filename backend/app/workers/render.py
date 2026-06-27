@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -27,6 +28,7 @@ MAX_CLIPS = 10
 MIN_CLIP_DURATION = 2.0
 MAX_CLIP_DURATION = 60.0
 
+_cascade_lock = threading.Lock()
 _FACE_CASCADE = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
@@ -279,8 +281,8 @@ def _detect_stable_face_center(video_path: str, start_time: float, duration: flo
         iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # Sample up to 15 frames spaced evenly across the clip
-        num_samples = 15
+        # Sample up to 5 frames spaced evenly across the clip (fast seek)
+        num_samples = 5
         sample_times = [start_time + (i * duration / max(1, num_samples - 1)) for i in range(num_samples)]
 
         detected_centers = []
@@ -293,17 +295,24 @@ def _detect_stable_face_center(video_path: str, start_time: float, duration: flo
 
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-            # 1. Try frontal face
-            faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 3)
+            # 1. Try frontal face (using minNeighbors=5 and lock for thread safety)
+            with _cascade_lock:
+                faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 5)
+            # Filter out tiny faces (likely background false positives)
+            faces = [f for f in faces if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih]
 
             # 2. Try profile face (facing right)
             if len(faces) == 0:
-                faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 3)
+                with _cascade_lock:
+                    faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 5)
+                faces = [f for f in faces if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih]
 
             # 3. Try profile face flipped (facing left)
             if len(faces) == 0:
                 flipped = cv2.flip(gray, 1)
-                faces_flipped = _PROFILE_CASCADE.detectMultiScale(flipped, 1.1, 3)
+                with _cascade_lock:
+                    faces_flipped = _PROFILE_CASCADE.detectMultiScale(flipped, 1.1, 5)
+                faces_flipped = [f for f in faces_flipped if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih]
                 if len(faces_flipped) > 0:
                     largest_face = max(faces_flipped, key=lambda f: f[2] * f[3])
                     xf, yf, wf, hf = largest_face
@@ -359,11 +368,18 @@ def _get_crop_filter(
     if iw <= 0 or ih <= 0:
         return None
 
+    # Skip face cropping for vertical videos to prevent bad framing and resolution loss
+    if iw < ih:
+        return (
+            f"scale='min({preset_w},iw)':'min({preset_h},ih)':force_original_aspect_ratio=decrease,"
+            f"pad={preset_w}:{preset_h}:(ow-iw)/2:(oh-ih)/2"
+        )
+
     # Detect stable face center (falls back to frame center)
     cx, cy = _detect_stable_face_center(video_path, start_time, duration)
 
-    # Apply 1.3x zoom factor to focus/zoom on the subject/speaker
-    zoom_factor = 1.3
+    # Use 1.0x zoom factor to avoid tight cropping that puts subject out of frame
+    zoom_factor = 1.0
     crop_h = int(ih / zoom_factor)
     crop_w = int(crop_h * preset_w / preset_h)
 
@@ -878,7 +894,7 @@ def _render_compilation(
 
 def _render_clip_parallel(args: tuple) -> dict | None:
     """Render a single clip (runs in thread pool)."""
-    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata, watermark_filters, caption_style = args
+    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata, watermark_filters, caption_style, enable_moderation = args
 
     clip_filename = f"clip_{clip_idx:04d}.mp4"
     clip_dir = os.path.dirname(input_path)
@@ -886,16 +902,20 @@ def _render_clip_parallel(args: tuple) -> dict | None:
 
     _render_clip(input_path, clip_path, start, end, caption, preset, hook_text, watermark_filters, caption_style)
 
-    moderation = moderate_segment(input_path, caption, start + 1.0)
-    if not moderation["passed"]:
-        logger.warning(
-            "Clip %d flagged by moderation (reason=%s) — skipping upload",
-            clip_idx,
-            moderation["reason"],
-        )
-        if os.path.exists(clip_path):
-            os.unlink(clip_path)
-        return None
+    if enable_moderation:
+        moderation = moderate_segment(input_path, caption, start + 1.0)
+        if not moderation["passed"]:
+            logger.warning(
+                "Clip %d flagged by moderation (reason=%s) — skipping upload",
+                clip_idx,
+                moderation["reason"],
+            )
+            if os.path.exists(clip_path):
+                os.unlink(clip_path)
+            return None
+    else:
+        logger.info("Content moderation is disabled for clip %d, skipping checks", clip_idx)
+        moderation = {"passed": True, "reason": ""}
 
     file_url = _upload_clip(clip_path, video_id, clip_idx)
 
@@ -953,6 +973,7 @@ def run_render(self, video_id: str):
         )
         caption_style = prefs.get("caption_style", "classic")
         music_track = prefs.get("music_track", "")
+        enable_moderation = prefs.get("enable_moderation", True)
 
         preset = get_preset(video.platform or "youtube_shorts")
 
@@ -981,6 +1002,9 @@ def run_render(self, video_id: str):
 
         if render_done:
             logger.info("Smart Resume: %d clips already exist for video %s, skipping render", existing_clips, video_id)
+            if video.status != VideoStatusEnum.COMPLETED:
+                video.status = VideoStatusEnum.COMPLETED
+                session.commit()
             return
 
         if job:
@@ -1047,13 +1071,13 @@ def run_render(self, video_id: str):
                 (input_video_path, seg["start"], seg["end"],
                  seg.get("text", ""), video_id, idx, preset,
                  pre_generated_data[idx][0], pre_generated_data[idx][1],
-                 watermark_filters, caption_style)
+                 watermark_filters, caption_style, enable_moderation)
                 for idx, seg in enumerate(top_segments)
             ]
 
-            # Parallel render
+            # Parallel render (capped at max 3 workers to prevent CPU/memory exhaustion)
             from app.services.device import get_optimal_threads
-            render_workers = get_optimal_threads()
+            render_workers = min(3, get_optimal_threads())
             with ThreadPoolExecutor(max_workers=render_workers) as executor:
                 futures = {
                     executor.submit(_render_clip_parallel, args): args
@@ -1155,6 +1179,7 @@ def run_render(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
+                video.transcript = {"error": f"Rendering failed: {exc}"}
             job = (
                 session.query(Job)
                 .filter(

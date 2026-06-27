@@ -287,8 +287,14 @@ fi
 echo -n "  Starting Celery worker... "
 cd "$BACKEND"
 source "$VENV/bin/activate"
-CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-$(python3 -c "import os; print(max(2, min(8, (os.cpu_count() or 4) // 2)))")}
-CELERY_POOL=${CELERY_POOL:-$(python3 -c "import sys; print('threads' if sys.platform == 'darwin' else 'prefork')")}
+# Limit concurrency to 3 on macOS to prevent OOM/CPU thrashing with multiple heavy ML models
+if [ "$(uname)" = "Darwin" ]; then
+  CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-3}
+  CELERY_POOL=${CELERY_POOL:-threads}
+else
+  CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-$(python3 -c "import os; print(max(2, min(8, (os.cpu_count() or 4) // 2)))")}
+  CELERY_POOL=${CELERY_POOL:-prefork}
+fi
 nohup "$VENV/bin/celery" -A app.workers.celery_app worker --loglevel=info --pool=$CELERY_POOL --concurrency=$CELERY_CONCURRENCY > "$ROOT/celery.log" 2>&1 &
 echo $! >> "$PID_FILE"
 sleep 3
