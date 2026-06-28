@@ -226,8 +226,11 @@ def run_transcription(self, video_id: str):
             if video:
                 video.status = VideoStatusEnum.FAILED
                 err_msg = str(exc)
-                if "DownloadError" in err_msg or "not available" in err_msg:
-                    err_msg = "YouTube video is not available (private, deleted, or geoblocked)."
+                err_lower = err_msg.lower()
+                blocked_kw = ("not available", "private", "removed", "deleted",
+                              "geoblocked", "age", "restricted", "copyright", "takedown")
+                if any(kw in err_lower for kw in blocked_kw):
+                    err_msg = f"YouTube video is not available ({', '.join(blocked_kw)})."
                 video.transcript = {"error": err_msg}
             job = (
                 session.query(Job)
