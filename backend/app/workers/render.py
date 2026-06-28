@@ -600,6 +600,25 @@ def _select_best_thumbnail(video_path: str, start: float, end: float) -> str | N
     return best_frame
 
 
+def _build_ken_burns_filter(pw: int, ph: int, duration: float) -> str | None:
+    """Build FFmpeg zoompan filter for a subtle Ken Burns zoom-in effect.
+
+    Zooms from 1.0x to ~1.15x over the clip duration, adding gentle motion
+    that makes cuts feel more dynamic. Skips clips shorter than 3 seconds
+    where the effect would be too abrupt.
+    """
+    if duration < 3:
+        return None
+    if duration * 30 < 15:
+        return None
+    zoom_rate = (1.15 - 1.0) / (duration * 30)
+    max_zoom = 1.15
+    return (
+        f"zoompan=z='if(eq(on,1),1,min(zoom+{zoom_rate:.6f},{max_zoom}))':"
+        f"d=1:s={pw}x{ph}:fps=30"
+    )
+
+
 def _render_clip(
     input_path: str,
     output_path: str,
@@ -653,6 +672,11 @@ def _render_clip(
             f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2"
         )
 
+    # Ken Burns slow zoom-in — gentle motion on all clips > 3s
+    ken_burns = _build_ken_burns_filter(pw, ph, duration)
+    if ken_burns:
+        filters.append(ken_burns)
+
     subtitle_filters = _build_subtitle_filter(caption, caption_style)
     if subtitle_filters:
         filters.extend(subtitle_filters)
@@ -671,12 +695,16 @@ def _render_clip(
 
     vf_str = ",".join(filters)
 
-    # Build audio ducking filter — reduce music volume during speech
-    speech_segments = [{"start": 0.0, "end": duration}]
+    # Build audio filter chain: loudnorm + ducking
+    clip_duration = end_time - start_time
+    audio_filters = ["loudnorm=I=-14:LRA=11:TP=-1.5"]
+    speech_segments = [{"start": 0.0, "end": clip_duration}]
     duck_filter = build_duck_filter(speech_segments)
+    if duck_filter:
+        audio_filters.append(duck_filter)
+    af_str = ",".join(audio_filters)
 
     # Input-seeking: -ss BEFORE -i does instant keyframe seek (vs slow decode-from-start)
-    clip_duration = end_time - start_time
     if _use_videotoolbox():
         cmd = [
             "ffmpeg",
@@ -695,6 +723,8 @@ def _render_clip(
             "aac",
             "-b:a",
             "192k",
+            "-af",
+            af_str,
         ]
     else:
         cmd = [
@@ -716,9 +746,9 @@ def _render_clip(
             "aac",
             "-b:a",
             "192k",
+            "-af",
+            af_str,
         ]
-    if duck_filter:
-        cmd.extend(["-af", duck_filter])
     cmd.extend(
         [
             "-vf",
@@ -944,10 +974,10 @@ def _render_compilation(
     preset: object | None = None,
     brand: BrandConfig | None = None,
 ) -> str | None:
-    """Stitch already-rendered clips into a 'best of' compilation with title/end cards.
+    """Stitch rendered clips into a 'best of' compilation with professional crossfades.
 
-    Uses FFmpeg concat demuxer (requires same codecs) instead of xfade.
-    Reuses clip files that were already rendered — no duplicate FFmpeg or Ollama calls.
+    Uses FFmpeg xfade filter for smooth transitions between title card, clips,
+    and end card. Transitions are 0.5s crossfades. All clips are re-encoded.
     Returns presigned URL for the uploaded compilation, or None on failure.
     """
     if preset is None:
@@ -962,7 +992,6 @@ def _render_compilation(
         )
     pw, ph = preset.width, preset.height
 
-    # Filter to clips that actually exist on disk
     valid_clips = [p for p in rendered_clip_paths[:5] if os.path.exists(p)]
     if len(valid_clips) < 3:
         logger.warning(
@@ -974,7 +1003,6 @@ def _render_compilation(
     title_path = None
     end_path = None
     final_path = None
-    concat_file = None
     try:
         first_text = segments[0].get("text", "")[:50] if segments else "Highlights"
         title_path = os.path.join(tmp_dir, "title.mp4")
@@ -984,36 +1012,79 @@ def _render_compilation(
         _create_end_card(end_path, pw, ph)
 
         all_paths = [title_path] + valid_clips + [end_path]
+        trans_dur = 0.5
 
-        concat_file = os.path.join(tmp_dir, "concat.txt")
-        with open(concat_file, "w") as f:
-            for p in all_paths:
-                f.write(f"file '{p}'\n")
+        # Get durations for xfade offset calculation
+        durations = []
+        for p in all_paths:
+            d = get_media_duration(p)
+            if d is None or d <= 0:
+                d = 3.0
+            durations.append(d)
+
+        num_inputs = len(all_paths)
+        filter_parts = []
+        labels_out_v = []
+        labels_out_a = []
+
+        for i in range(num_inputs):
+            labels_out_v.append(f"v{i}")
+            labels_out_a.append(f"a{i}")
+            filter_parts.append(
+                f"[{i}:v]format=yuv420p[{labels_out_v[i]}];"
+                f"[{i}:a]aresample=48000[{labels_out_a[i]}]"
+            )
+
+        cur_v = labels_out_v[0]
+        cur_a = labels_out_a[0]
+        running_dur = durations[0]
+
+        for i in range(1, num_inputs):
+            next_v = labels_out_v[i]
+            next_a = labels_out_a[i]
+            offset = max(0, running_dur - trans_dur)
+
+            # Slightly different transition from title→clip vs clip→clip
+            trans_type = "fade"  # default
+            # Use a different transition for clip→clip for visual variety
+            if i > 1 and i < num_inputs - 1:
+                trans_options = ["fade", "fadeblack", "slideleft"]
+                trans_type = trans_options[i % len(trans_options)]
+
+            out_v = f"x{i}v"
+            out_a = f"x{i}a"
+            filter_parts.append(
+                f"[{cur_v}][{cur_a}][{next_v}][{next_a}]"
+                f"xfade=transition={trans_type}:duration={trans_dur}:offset={offset}"
+                f"[{out_v}][{out_a}]"
+            )
+            cur_v = out_v
+            cur_a = out_a
+            running_dur += durations[i] - trans_dur
+
+        filter_complex = ";".join(filter_parts)
 
         final_path = os.path.join(tmp_dir, "best_of.mp4")
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            concat_file,
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
+        cmd = ["ffmpeg", "-y"]
+        for p in all_paths:
+            cmd.extend(["-i", p])
+        cmd += [
+            "-filter_complex", filter_complex,
+            "-map", f"[{cur_v}]",
+            "-map", f"[{cur_a}]",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
             final_path,
         ]
-        logger.debug("Running compilation concat: %s", " ".join(cmd))
+        logger.debug("Running compilation xfade: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(
-                f"Compilation FFmpeg failed (rc={result.returncode}): {result.stderr[:500]}"
+                f"Compilation xfade failed (rc={result.returncode}): {result.stderr[:500]}"
             )
         if not os.path.exists(final_path):
-            raise RuntimeError("Compilation FFmpeg did not produce output")
+            raise RuntimeError("Compilation xfade did not produce output")
 
         ensure_bucket()
         object_name = f"compilations/{video_id}/best_of.mp4"
@@ -1026,15 +1097,12 @@ def _render_compilation(
         logger.warning("Compilation failed for video %s: %s", video_id, exc)
         return None
     finally:
-        # Only clean up files we created (title, end, final, concat) — NOT the rendered clips
         if title_path and os.path.exists(title_path):
             os.unlink(title_path)
         if end_path and os.path.exists(end_path):
             os.unlink(end_path)
         if final_path and os.path.exists(final_path):
             os.unlink(final_path)
-        if concat_file and os.path.exists(concat_file):
-            os.unlink(concat_file)
         if os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1229,12 +1297,23 @@ def run_render(self, video_id: str):
             # Apply background music if configured
             music_track = prefs.get("music_track", "")
             if music_track and segments:
-                from app.services.music import apply_backing_music, generate_backing_track
+                from app.services.music import (
+                    apply_backing_music,
+                    generate_backing_track,
+                    search_and_download_pixabay_music,
+                )
 
                 music_path = tempfile.mktemp(suffix=".mp3")
                 try:
                     video_duration = get_media_duration(input_video_path)
-                    result = generate_backing_track(music_track, video_duration, music_path)
+                    # Try Pixabay first (real music), fall back to sine-wave synthesis
+                    downloaded = search_and_download_pixabay_music(
+                        music_track, music_path, video_duration
+                    )
+                    if downloaded:
+                        result = music_path
+                    else:
+                        result = generate_backing_track(music_track, video_duration, music_path)
                     if result:
                         speech_segments = [
                             {"start": s["start"], "end": s["end"]}

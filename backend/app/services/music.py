@@ -199,6 +199,55 @@ async def search_pixabay_music(query: str, per_page: int = 10) -> list[dict[str,
     return []
 
 
+def search_and_download_pixabay_music(
+    query: str, output_path: str, duration: float = 30.0
+) -> str | None:
+    """Search Pixabay for free music matching the query, download the best match.
+
+    Synchronous version of search_pixabay_music for use in Celery workers.
+    Falls back gracefully — returns None if search or download fails.
+    """
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                PIXABAY_MUSIC_URL,
+                params={"q": query, "per_page": 5, "duration": "short"},
+            )
+            if resp.status_code != 200:
+                logger.debug("Pixabay search returned %d", resp.status_code)
+                return None
+            data = resp.json()
+            hits = data.get("hits", [])
+            if not hits:
+                logger.debug("No Pixabay results for '%s'", query)
+                return None
+
+            # Pick the best match: prefer duration within 10s of target
+            best = hits[0]
+            for hit in hits:
+                hit_dur = hit.get("duration", 0)
+                if abs(hit_dur - duration) < abs(best.get("duration", 0) - duration):
+                    best = hit
+
+            audio_url = best.get("audios", {}).get("medium", {}).get("url", "")
+            if not audio_url:
+                audio_url = best.get("url", "")
+            if not audio_url:
+                logger.debug("No audio URL in Pixabay result")
+                return None
+
+            dl_resp = client.get(audio_url, timeout=30.0)
+            if dl_resp.status_code != 200:
+                return None
+            with open(output_path, "wb") as f:
+                f.write(dl_resp.content)
+            logger.info("Downloaded Pixabay track '%s' (%s)", best.get("tags", ""), audio_url)
+            return output_path
+    except Exception as e:
+        logger.debug("Pixabay search/download failed: %s", e)
+        return None
+
+
 def apply_backing_music(
     video_path: str, music_path: str, speech_segments: list[dict], output_path: str
 ) -> str:
