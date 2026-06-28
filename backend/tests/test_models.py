@@ -65,6 +65,7 @@ def test_job_creation():
 def test_api_key_model():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
+
     from app.models.api_key import ApiKey
 
     engine = create_engine("sqlite:///:memory:")
@@ -77,7 +78,9 @@ def test_api_key_model():
     db.add(user)
     db.flush()
 
-    api_key = ApiKey(user_id=user.id, name="Test Key", key_hash="abc123def456", key_prefix="cf_test123")
+    api_key = ApiKey(
+        user_id=user.id, name="Test Key", key_hash="abc123def456", key_prefix="cf_test123"
+    )
     db.add(api_key)
     db.commit()
 

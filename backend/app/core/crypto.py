@@ -2,6 +2,7 @@
 
 Uses Fernet (AES-128-CBC + HMAC-SHA256) with a key derived from JWT_SECRET.
 """
+
 import base64
 import hashlib
 

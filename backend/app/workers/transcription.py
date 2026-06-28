@@ -37,7 +37,9 @@ def run_transcription(self, video_id: str):
 
         # ── Smart Resume: check both job status AND actual data ──
         has_transcript_data = bool(video.transcript and video.segments and len(video.segments) > 0)
-        transcription_skipped = (trans_job and trans_job.status == JobStatusEnum.DONE) or has_transcript_data
+        transcription_skipped = (
+            trans_job and trans_job.status == JobStatusEnum.DONE
+        ) or has_transcript_data
 
         video.status = VideoStatusEnum.PROCESSING
 
@@ -50,7 +52,13 @@ def run_transcription(self, video_id: str):
 
             if video.source_url.startswith("http://") or video.source_url.startswith("https://"):
                 logger.info("Downloading external video %s for transcription", video_id)
-                broadcast_sync(video_id, "transcription", 0.05, "running", "Downloading from YouTube (this may take a while)...")
+                broadcast_sync(
+                    video_id,
+                    "transcription",
+                    0.05,
+                    "running",
+                    "Downloading from YouTube (this may take a while)...",
+                )
 
                 from app.services.storage import upload_file
                 from app.services.video import download_from_url, get_video_duration
@@ -92,7 +100,7 @@ def run_transcription(self, video_id: str):
             language = result.get("language", "en")
 
             # Split whisper segments into ~3s chunks using word timestamps
-            MAX_CHUNK_DURATION = 3.5
+            max_chunk_duration = 3.5
             segments = []
             full_text_parts = []
             for seg in whisper_segments:
@@ -106,12 +114,34 @@ def run_transcription(self, video_id: str):
                         if not chunk_words:
                             chunk_start = w_start
                             chunk_words.append(w)
-                        elif w_end - chunk_start <= MAX_CHUNK_DURATION:
+                        elif w_end - chunk_start <= max_chunk_duration:
                             chunk_words.append(w)
                         else:
                             chunk_text = " ".join(cw.get("word", "").strip() for cw in chunk_words)
                             chunk_end = chunk_words[-1].get("end", seg["end"])
-                            segments.append({
+                            segments.append(
+                                {
+                                    "start": chunk_start,
+                                    "end": chunk_end,
+                                    "text": chunk_text,
+                                    "score": 0.0,
+                                    "emotion_intensity": 0.0,
+                                    "keyword_density": 0.0,
+                                    "scene_change_intensity": 0.0,
+                                    "audio_energy": 0.0,
+                                    "viral_score": 0.0,
+                                    "hook_score": 0.0,
+                                    "engagement_potential": 0.0,
+                                }
+                            )
+                            full_text_parts.append(chunk_text)
+                            chunk_start = w_start
+                            chunk_words = [w]
+                    if chunk_words:
+                        chunk_text = " ".join(cw.get("word", "").strip() for cw in chunk_words)
+                        chunk_end = chunk_words[-1].get("end", seg["end"])
+                        segments.append(
+                            {
                                 "start": chunk_start,
                                 "end": chunk_end,
                                 "text": chunk_text,
@@ -123,26 +153,8 @@ def run_transcription(self, video_id: str):
                                 "viral_score": 0.0,
                                 "hook_score": 0.0,
                                 "engagement_potential": 0.0,
-                            })
-                            full_text_parts.append(chunk_text)
-                            chunk_start = w_start
-                            chunk_words = [w]
-                    if chunk_words:
-                        chunk_text = " ".join(cw.get("word", "").strip() for cw in chunk_words)
-                        chunk_end = chunk_words[-1].get("end", seg["end"])
-                        segments.append({
-                            "start": chunk_start,
-                            "end": chunk_end,
-                            "text": chunk_text,
-                            "score": 0.0,
-                            "emotion_intensity": 0.0,
-                            "keyword_density": 0.0,
-                            "scene_change_intensity": 0.0,
-                            "audio_energy": 0.0,
-                            "viral_score": 0.0,
-                            "hook_score": 0.0,
-                            "engagement_potential": 0.0,
-                        })
+                            }
+                        )
                         full_text_parts.append(chunk_text)
                 else:
                     seg_dict = {
@@ -168,7 +180,9 @@ def run_transcription(self, video_id: str):
             }
             video.language = language
             video.segments = segments
-            broadcast_sync(video_id, "transcription", 1.0, "completed", f"Transcription complete in {language}")
+            broadcast_sync(
+                video_id, "transcription", 1.0, "completed", f"Transcription complete in {language}"
+            )
 
             if trans_job:
                 trans_job.progress = 1.0
@@ -178,14 +192,21 @@ def run_transcription(self, video_id: str):
             logger.info("Transcription complete for video %s", video_id)
 
             from app.services.webhooks import fire_event_sync
-            fire_event_sync(video_id, "transcription.completed", {
-                "status": "completed",
-                "language": language,
-                "segments_count": len(segments),
-            })
+
+            fire_event_sync(
+                video_id,
+                "transcription.completed",
+                {
+                    "status": "completed",
+                    "language": language,
+                    "segments_count": len(segments),
+                },
+            )
         else:
             session.commit()
-            logger.info("Smart Resume: transcription already complete for video %s, skipping", video_id)
+            logger.info(
+                "Smart Resume: transcription already complete for video %s, skipping", video_id
+            )
 
         # ── Smart Resume: route to next stage based on HIGHLIGHT job status ──
         highlight_job = (
@@ -202,15 +223,26 @@ def run_transcription(self, video_id: str):
         should_skip_highlight = highlight_job and highlight_job.status == JobStatusEnum.DONE
 
         if should_skip_highlight:
-            logger.info("Smart Resume: highlights already complete for video %s, skipping to render", video_id)
+            logger.info(
+                "Smart Resume: highlights already complete for video %s, skipping to render",
+                video_id,
+            )
             from app.workers.render import run_render
+
             run_render.delay(video_id)
         else:
             if highlight_job and highlight_job.status == JobStatusEnum.QUEUED:
-                logger.info("Smart Resume: highlights queued for video %s, starting NLP + Scene Detect", video_id)
+                logger.info(
+                    "Smart Resume: highlights queued for video %s, starting NLP + Scene Detect",
+                    video_id,
+                )
             else:
-                logger.info("Smart Resume: highlight job status=%s for video %s, defaulting to NLP + Scene Detect",
-                            highlight_job.status if highlight_job else "None", video_id)
+                logger.info(
+                    "Smart Resume: highlight job status=%s for video %s,"
+                    " defaulting to NLP + Scene Detect",
+                    highlight_job.status if highlight_job else "None",
+                    video_id,
+                )
             from app.workers.nlp import run_nlp
             from app.workers.scene_detect import run_scene_detect
 
@@ -227,8 +259,17 @@ def run_transcription(self, video_id: str):
                 video.status = VideoStatusEnum.FAILED
                 err_msg = str(exc)
                 err_lower = err_msg.lower()
-                blocked_kw = ("not available", "private", "removed", "deleted",
-                              "geoblocked", "age", "restricted", "copyright", "takedown")
+                blocked_kw = (
+                    "not available",
+                    "private",
+                    "removed",
+                    "deleted",
+                    "geoblocked",
+                    "age",
+                    "restricted",
+                    "copyright",
+                    "takedown",
+                )
                 if any(kw in err_lower for kw in blocked_kw):
                     err_msg = f"YouTube video is not available ({', '.join(blocked_kw)})."
                 video.transcript = {"error": err_msg}

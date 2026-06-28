@@ -4,15 +4,16 @@ Determines the earliest incomplete stage in the video processing pipeline
 (transcription -> highlights -> render) and triggers the appropriate Celery tasks,
 reusing already generated database state to save time and resources.
 """
+
 import logging
-import uuid
+
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.models.video import Video, VideoStatusEnum
-from app.models.job import Job, JobStatusEnum, JobTypeEnum
 from app.models.clip import Clip
+from app.models.job import Job, JobStatusEnum, JobTypeEnum
+from app.models.video import Video, VideoStatusEnum
 
 logger = logging.getLogger(__name__)
 

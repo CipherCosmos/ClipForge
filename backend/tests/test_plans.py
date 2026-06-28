@@ -1,11 +1,10 @@
 """Tests for plan gating."""
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.core.plans import (
-    FREE_LIMITS,
-    PRO_LIMITS,
     check_upload_limit,
     get_limits,
     requires_pro,

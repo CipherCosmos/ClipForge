@@ -7,13 +7,12 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ratelimit import limiter
 from app.core.security import get_current_user
-
-logger = logging.getLogger(__name__)
 from app.database import get_db
 from app.models.job import Job, JobStatusEnum, JobTypeEnum
 from app.models.user import User
@@ -21,15 +20,17 @@ from app.models.video import Video, VideoStatusEnum
 from app.schemas.video import VideoCreate, VideoListResponse, VideoResponse
 from app.services.platforms import get_preset, list_presets
 from app.services.storage import (
+    copy_file,
+    copy_prefix,
     delete_file,
     delete_prefix,
     ensure_bucket,
     get_presigned_url,
     upload_file,
-    copy_file,
-    copy_prefix,
 )
 from app.services.video import standardize_youtube_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
@@ -45,15 +46,17 @@ def _validate_url(url: str):
 async def get_or_clone_video_if_exists(
     db: AsyncSession, url: str, platform: str, user_id: uuid.UUID
 ) -> Optional[Video]:
-    """Check if video has already been processed and clone it or return the existing user's record."""
+    """Check if video has already been processed and clone it or return the
+    existing user's record."""
     # 1. Standardize URL
     standard_url = standardize_youtube_url(url)
 
     # 2. Check if the current user already has this video
-    stmt = select(Video).where(
-        Video.user_id == user_id,
-        Video.source_url == standard_url
-    ).order_by(Video.created_at.desc())
+    stmt = (
+        select(Video)
+        .where(Video.user_id == user_id, Video.source_url == standard_url)
+        .order_by(Video.created_at.desc())
+    )
     res = await db.execute(stmt)
     existing_for_user = res.scalars().first()
     if existing_for_user:
@@ -61,15 +64,18 @@ async def get_or_clone_video_if_exists(
         return existing_for_user
 
     # 3. Check if any other user has a COMPLETED video for this URL
-    stmt_other = select(Video).where(
-        Video.source_url == standard_url,
-        Video.status == VideoStatusEnum.COMPLETED
-    ).order_by(Video.created_at.desc())
+    stmt_other = (
+        select(Video)
+        .where(Video.source_url == standard_url, Video.status == VideoStatusEnum.COMPLETED)
+        .order_by(Video.created_at.desc())
+    )
     res_other = await db.execute(stmt_other)
     completed_other = res_other.scalars().first()
 
     if completed_other:
-        logger.info("Deduplication Match: cloning video %s for user %s", completed_other.id, user_id)
+        logger.info(
+            "Deduplication Match: cloning video %s for user %s", completed_other.id, user_id
+        )
 
         # Clone the Video
         cloned_video = Video(
@@ -81,7 +87,7 @@ async def get_or_clone_video_if_exists(
             transcript=completed_other.transcript,
             segments=completed_other.segments,
             language=completed_other.language,
-            platform=platform or completed_other.platform
+            platform=platform or completed_other.platform,
         )
         db.add(cloned_video)
         await db.flush()  # Populate cloned_video.id
@@ -99,6 +105,7 @@ async def get_or_clone_video_if_exists(
 
         # Clone the Clips
         from app.models.clip import Clip
+
         stmt_clips = select(Clip).where(Clip.video_id == completed_other.id)
         res_clips = await db.execute(stmt_clips)
         other_clips = res_clips.scalars().all()
@@ -120,17 +127,14 @@ async def get_or_clone_video_if_exists(
                 file_url=file_url,
                 thumbnail_url=thumbnail_url,
                 title=clip.title,
-                hashtags=clip.hashtags
+                hashtags=clip.hashtags,
             )
             db.add(cloned_clip)
 
         # Create completed Jobs
         for jtype in [JobTypeEnum.TRANSCRIPTION, JobTypeEnum.HIGHLIGHT, JobTypeEnum.RENDER]:
             cloned_job = Job(
-                video_id=cloned_video.id,
-                type=jtype,
-                status=JobStatusEnum.DONE,
-                progress=1.0
+                video_id=cloned_video.id, type=jtype, status=JobStatusEnum.DONE, progress=1.0
             )
             db.add(cloned_job)
 
@@ -139,7 +143,6 @@ async def get_or_clone_video_if_exists(
         return cloned_video
 
     return None
-
 
 
 async def _video_to_response(video: Video, db: AsyncSession | None = None) -> VideoResponse:
@@ -163,13 +166,18 @@ async def _video_to_response(video: Video, db: AsyncSession | None = None) -> Vi
     if db:
         try:
             import uuid
-            from sqlalchemy import select, func as sa_func
+
+            from sqlalchemy import select
+
             from app.models import Job, JobStatusEnum
+
             running_job = await db.execute(
-                select(Job).where(
+                select(Job)
+                .where(
                     Job.video_id == uuid.UUID(str(video.id)),
                     Job.status == JobStatusEnum.RUNNING,
-                ).limit(1)
+                )
+                .limit(1)
             )
             rj = running_job.scalar_one_or_none()
             if rj:
@@ -226,6 +234,7 @@ async def upload_video(
     await db.refresh(video)
 
     from app.services.pipeline import start_pipeline
+
     await start_pipeline(db, video)
 
     return await _video_to_response(video, db)
@@ -264,6 +273,7 @@ async def import_video(
     await db.refresh(video)
 
     from app.services.pipeline import start_pipeline
+
     await start_pipeline(db, video)
 
     return await _video_to_response(video, db)
@@ -309,12 +319,14 @@ async def import_batch_videos(
         await db.flush()
 
         from app.services.pipeline import start_pipeline
+
         await start_pipeline(db, video)
 
         created.append({"id": str(video.id), "url": url, "cloned": False})
 
     await db.commit()
     return {"videos": created, "count": len(created)}
+
 
 @router.get("/platforms")
 async def list_platform_presets():
@@ -362,6 +374,7 @@ async def get_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
     return await _video_to_response(video, db)
 
+
 @router.post("/{video_id}/reprocess", response_model=VideoResponse)
 async def reprocess_video(
     video_id: uuid.UUID,
@@ -378,6 +391,7 @@ async def reprocess_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     from app.services.pipeline import start_pipeline
+
     try:
         await start_pipeline(
             db,
@@ -389,11 +403,10 @@ async def reprocess_video(
         logger.error("Failed to enqueue pipeline task: %s", e)
         raise HTTPException(
             status_code=503,
-            detail="Processing queue unavailable. Make sure Celery and Redis are running."
+            detail="Processing queue unavailable. Make sure Celery and Redis are running.",
         )
 
     return await _video_to_response(video, db)
-
 
 
 @router.delete("/{video_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -410,6 +423,7 @@ async def delete_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     from app.models.clip import Clip
+
     await db.execute(delete(Clip).where(Clip.video_id == video_id))
     await db.execute(delete(Job).where(Job.video_id == video_id))
     await db.execute(delete(Video).where(Video.id == video_id))
@@ -452,8 +466,6 @@ async def batch_delete_videos(
     await db.commit()
 
 
-from pydantic import BaseModel
-
 
 class VideoDubRequest(BaseModel):
     target_langs: list[str] | None = None
@@ -474,6 +486,7 @@ async def dub_video(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
     from app.workers.dubbing import run_dub_video
+
     run_dub_video.delay(str(video_id), payload.target_langs)
 
     return await _video_to_response(video, db)

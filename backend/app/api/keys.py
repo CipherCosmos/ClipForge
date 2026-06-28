@@ -1,4 +1,5 @@
 """API key management endpoints with names and expiration."""
+
 import logging
 from typing import Optional
 

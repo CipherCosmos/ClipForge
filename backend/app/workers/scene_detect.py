@@ -1,4 +1,5 @@
 """Scene detection using PySceneDetect v0.7 (BSD license)."""
+
 import logging
 import os
 import shutil
@@ -91,8 +92,7 @@ def run_scene_detect(self, video_id: str):
 
         # ── Smart Resume: skip if segments already have scene/audio data ──
         has_scene_data = bool(segments) and all(
-            isinstance(s, dict) and "speaker_confidence" in s
-            for s in segments
+            isinstance(s, dict) and "speaker_confidence" in s for s in segments
         )
 
         job = (
@@ -131,13 +131,29 @@ def run_scene_detect(self, video_id: str):
         tmp_path = os.path.join(tmpdir, "input.mp4")
         download_file(video.source_url, tmp_path)
 
-        # Downscale to 480p at 5fps for fast scene detection (cuts are detectable at any resolution/fps)
+        # Downscale to 480p at 5fps for fast scene detection (cuts detectable at any resolution/fps)
         downscaled_path = os.path.join(tmpdir, "input_detect.mp4")
         try:
             subprocess.run(
-                ["ffmpeg", "-y", "-i", tmp_path, "-vf", "scale=854:480,fps=5", "-an",
-                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", downscaled_path],
-                capture_output=True, timeout=60, check=True
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    tmp_path,
+                    "-vf",
+                    "scale=854:480,fps=5",
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-crf",
+                    "28",
+                    downscaled_path,
+                ],
+                capture_output=True,
+                timeout=60,
+                check=True,
             )
             detect_path = downscaled_path
             logger.info("Downscaled video to 480p@5fps for fast scene detection")
@@ -171,7 +187,9 @@ def run_scene_detect(self, video_id: str):
 
         def _run_emotions():
             try:
-                logger.info("Running single-pass audio emotion & event analysis for video %s", video_id)
+                logger.info(
+                    "Running single-pass audio emotion & event analysis for video %s", video_id
+                )
                 return analyze_full_audio_emotions(audio_path)
             except Exception as e:
                 logger.warning("SenseVoice full analysis failed for video %s: %s", video_id, e)
@@ -205,18 +223,19 @@ def run_scene_detect(self, video_id: str):
         # Map emotion + events + prosody per segment
         total = len(segments)
         last_broadcast = -1
-        last_progress = 0.0
         for idx, seg in enumerate(segments):
             seg_start = seg["start"]
             seg_end = seg["end"]
 
             # Map emotions and events that overlap with this segment
             seg_emotions = [
-                e for e in all_emotions
+                e
+                for e in all_emotions
                 if e.get("start", 0) < seg_end and e.get("end", 0) > seg_start
             ]
             seg_events = [
-                ev for ev in all_events
+                ev
+                for ev in all_events
                 if ev.get("start", 0) < seg_end and ev.get("end", 0) > seg_start
             ]
 
@@ -248,6 +267,7 @@ def run_scene_detect(self, video_id: str):
             if job:
                 job_progress = min(0.99, (idx + 1) / max(total, 1) * 0.5 + 0.5)
                 from sqlalchemy import update
+
                 session.execute(update(Job).where(Job.id == job.id).values(progress=job_progress))
                 session.commit()
                 pct = int(job_progress * 100)
@@ -255,10 +275,17 @@ def run_scene_detect(self, video_id: str):
                     last_broadcast = pct
                     # Web UI expects progress 0 to 1 mapping from 0.5 to 1.0 for scene_detect
                     ws_progress = 0.5 + (0.5 * job_progress)
-                    broadcast_sync(video_id, "scene_detect", ws_progress, "running", f"Analyzed {idx + 1}/{total} segments")
+                    broadcast_sync(
+                        video_id,
+                        "scene_detect",
+                        ws_progress,
+                        "running",
+                        f"Analyzed {idx + 1}/{total} segments",
+                    )
 
         video.segments = segments
         from sqlalchemy.orm.attributes import flag_modified
+
         flag_modified(video, "segments")
         session.commit()
 
@@ -266,13 +293,19 @@ def run_scene_detect(self, video_id: str):
         broadcast_sync(video_id, "scene_detect", 1.0, "completed", f"Analyzed {total} segments")
 
         from app.services.webhooks import fire_event_sync
-        fire_event_sync(video_id, "scene_detect.completed", {
-            "status": "completed",
-            "segments_count": total,
-        })
+
+        fire_event_sync(
+            video_id,
+            "scene_detect.completed",
+            {
+                "status": "completed",
+                "segments_count": total,
+            },
+        )
 
         # Trigger merge if NLP is also done
         from app.workers.join_worker import check_and_merge
+
         check_and_merge(video_id)
 
         return segments
@@ -284,9 +317,13 @@ def run_scene_detect(self, video_id: str):
             if video:
                 video.status = VideoStatusEnum.FAILED
                 video.transcript = {"error": f"Scene detection failed: {exc}"}
-            job = session.query(Job).filter(
-                and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
-            ).first()
+            job = (
+                session.query(Job)
+                .filter(
+                    and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
+                )
+                .first()
+            )
             if job:
                 job.status = JobStatusEnum.FAILED
             session.commit()

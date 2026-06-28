@@ -11,25 +11,25 @@ _HTML_HEAD = (
     '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
 )
 _BODY_STYLE = (
-    'margin:0;padding:0;background-color:#f4f4f4;'
-    'font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif'
+    "margin:0;padding:0;background-color:#f4f4f4;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
 )
-_OUTER_TABLE_STYLE = 'background-color:#f4f4f4;padding:40px 0'
+_OUTER_TABLE_STYLE = "background-color:#f4f4f4;padding:40px 0"
 _INNER_TABLE_STYLE = (
-    'background-color:#ffffff;border-radius:12px;'
-    'overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)'
+    "background-color:#ffffff;border-radius:12px;"
+    "overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08)"
 )
-_CELL_STYLE = 'padding:40px 32px 32px;text-align:center'
+_CELL_STYLE = "padding:40px 32px 32px;text-align:center"
 _LINK_STYLE = (
-    'display:inline-block;padding:14px 32px;background-color:#6366f1;'
-    'color:#ffffff;text-decoration:none;border-radius:8px;font-size:16px;font-weight:600'
+    "display:inline-block;padding:14px 32px;background-color:#6366f1;"
+    "color:#ffffff;text-decoration:none;border-radius:8px;font-size:16px;font-weight:600"
 )
 
 
 def _html_template(content: str) -> str:
     return (
-        '<!DOCTYPE html>\n<html>\n'
-        f'{_HTML_HEAD}\n'
+        "<!DOCTYPE html>\n<html>\n"
+        f"{_HTML_HEAD}\n"
         f'<body style="{_BODY_STYLE}">\n'
         f'<table role="presentation" width="100%" cellpadding="0"'
         f' cellspacing="0" style="{_OUTER_TABLE_STYLE}">\n'
@@ -37,8 +37,8 @@ def _html_template(content: str) -> str:
         f'<table role="presentation" width="480" cellpadding="0"'
         f' cellspacing="0" style="{_INNER_TABLE_STYLE}">\n'
         f'<tr><td style="{_CELL_STYLE}">\n'
-        f'{content}'
-        '</td></tr>\n</table>\n</td></tr>\n</table>\n</body>\n</html>'
+        f"{content}"
+        "</td></tr>\n</table>\n</td></tr>\n</table>\n</body>\n</html>"
     )
 
 
@@ -105,7 +105,9 @@ async def send_email(to: str, subject: str, html: str) -> bool:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Email provider returned error for %s: %s - %s",
-            to, e.response.status_code, e.response.text,
+            to,
+            e.response.status_code,
+            e.response.text,
         )
     except httpx.RequestError as e:
         logger.error("Email request failed for %s: %s", to, str(e))
@@ -119,17 +121,17 @@ def _verification_html(token: str) -> str:
     url = f"{settings.FRONTEND_URL}/verify-email?token={token}"
     content = (
         '<h1 style="margin:0 0 8px;font-size:24px;color:#1a1a2e;font-weight:700">'
-        'Welcome to ClipForge</h1>\n'
+        "Welcome to ClipForge</h1>\n"
         '<p style="margin:0 0 24px;font-size:16px;color:#666;line-height:1.5">'
-        'Please verify your email address to get started.</p>\n'
+        "Please verify your email address to get started.</p>\n"
         f'<a href="{url}" style="{_LINK_STYLE}">Verify Email</a>\n'
         '<p style="margin:24px 0 0;font-size:14px;color:#999">'
-        'Or copy this link into your browser:</p>\n'
+        "Or copy this link into your browser:</p>\n"
         f'<p style="margin:4px 0 0;font-size:13px;color:#6366f1;word-break:break-all">'
-        f'{url}</p>\n'
+        f"{url}</p>\n"
         '<p style="margin:24px 0 0;font-size:13px;color:#999">'
-        'This link expires in 24 hours. If you didn\'t create an account,'
-        ' ignore this email.</p>'
+        "This link expires in 24 hours. If you didn't create an account,"
+        " ignore this email.</p>"
     )
     return _html_template(content)
 
@@ -138,17 +140,17 @@ def _password_reset_html(token: str) -> str:
     url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
     content = (
         '<h1 style="margin:0 0 8px;font-size:24px;color:#1a1a2e;font-weight:700">'
-        'Reset Your Password</h1>\n'
+        "Reset Your Password</h1>\n"
         '<p style="margin:0 0 24px;font-size:16px;color:#666;line-height:1.5">'
-        'Click the button below to set a new password for your ClipForge account.</p>\n'
+        "Click the button below to set a new password for your ClipForge account.</p>\n"
         f'<a href="{url}" style="{_LINK_STYLE}">Reset Password</a>\n'
         '<p style="margin:24px 0 0;font-size:14px;color:#999">'
-        'Or copy this link into your browser:</p>\n'
+        "Or copy this link into your browser:</p>\n"
         f'<p style="margin:4px 0 0;font-size:13px;color:#6366f1;word-break:break-all">'
-        f'{url}</p>\n'
+        f"{url}</p>\n"
         '<p style="margin:24px 0 0;font-size:13px;color:#999">'
-        'This link expires in 1 hour. If you didn\'t request a reset,'
-        ' ignore this email.</p>'
+        "This link expires in 1 hour. If you didn't request a reset,"
+        " ignore this email.</p>"
     )
     return _html_template(content)
 
@@ -156,13 +158,13 @@ def _password_reset_html(token: str) -> str:
 def _welcome_html() -> str:
     content = (
         '<h1 style="margin:0 0 8px;font-size:24px;color:#1a1a2e;font-weight:700">'
-        'Welcome to ClipForge!</h1>\n'
+        "Welcome to ClipForge!</h1>\n"
         '<p style="margin:0 0 8px;font-size:16px;color:#666;line-height:1.5">'
-        'Your account is ready. Start uploading videos and let AI find your'
-        ' viral moments.</p>\n'
+        "Your account is ready. Start uploading videos and let AI find your"
+        " viral moments.</p>\n"
         '<p style="margin:0 0 24px;font-size:16px;color:#666;line-height:1.5">'
-        'Upload a video, and we\'ll handle transcription, viral scoring,'
-        ' and clip rendering automatically.</p>\n'
+        "Upload a video, and we'll handle transcription, viral scoring,"
+        " and clip rendering automatically.</p>\n"
         f'<a href="{settings.FRONTEND_URL}" style="{_LINK_STYLE}">Get Started</a>'
     )
     return _html_template(content)

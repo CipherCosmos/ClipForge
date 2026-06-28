@@ -1,10 +1,10 @@
 """Tests for webhook system — uses mocked DB session."""
-from unittest.mock import MagicMock, patch
 
 import uuid
+from unittest.mock import MagicMock, patch
 
-from app.services.webhooks import fire_event_sync
 from app.models.webhook import Webhook
+from app.services.webhooks import fire_event_sync
 
 
 def _make_hook(
@@ -34,13 +34,17 @@ def test_fire_event_success(mock_session_cls):
         mock_instance = MagicMock()
         mock_client.return_value.__enter__.return_value = mock_instance
         mock_instance.post.return_value.status_code = 200
-        fire_event_sync("00000000-0000-0000-0000-000000000001", "clip.published", {"clip_id": "clip-1"})
+        fire_event_sync(
+            "00000000-0000-0000-0000-000000000001", "clip.published", {"clip_id": "clip-1"}
+        )
         mock_instance.post.assert_called_once()
 
 
 @patch("app.workers.celery_app.SyncSessionLocal")
 def test_fire_event_failure_does_not_raise(mock_session_cls):
-    hook = _make_hook("00000000-0000-0000-0000-000000000001", "https://example.com/bad-hook", ["all"])
+    hook = _make_hook(
+        "00000000-0000-0000-0000-000000000001", "https://example.com/bad-hook", ["all"]
+    )
     mock_session = MagicMock()
     mock_session.query.return_value.filter.return_value.all.return_value = [hook]
     mock_session_cls.return_value = mock_session
@@ -55,7 +59,9 @@ def test_fire_event_failure_does_not_raise(mock_session_cls):
 @patch("app.workers.celery_app.SyncSessionLocal")
 def test_event_filtering(mock_session_cls):
     """Webhooks registered for 'job.completed' should NOT fire for 'clip.published'."""
-    hook = _make_hook("00000000-0000-0000-0000-000000000001", "https://example.com/hook", ["job.completed"])
+    hook = _make_hook(
+        "00000000-0000-0000-0000-000000000001", "https://example.com/hook", ["job.completed"]
+    )
     mock_session = MagicMock()
     mock_session.query.return_value.filter.return_value.all.return_value = [hook]
     mock_session_cls.return_value = mock_session

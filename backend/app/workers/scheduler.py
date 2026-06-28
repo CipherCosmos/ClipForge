@@ -1,9 +1,10 @@
 """Celery periodic task for scheduled publishing."""
+
 import asyncio
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.core.crypto import decrypt_token
 from app.models.schedule import Schedule

@@ -1,16 +1,17 @@
 import json
-import pytest
-from unittest.mock import patch, MagicMock
-from httpx import ASGITransport, AsyncClient
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from app.api.videos import get_or_clone_video_if_exists
 from app.core.security import get_current_user
 from app.database import get_db
 from app.main import app
-from app.models import PlanEnum, User, Video, VideoStatusEnum, Clip, Job, JobStatusEnum, JobTypeEnum
+from app.models import Clip, Job, JobStatusEnum, PlanEnum, User, Video, VideoStatusEnum
 from app.services.video import standardize_youtube_url
-from app.api.videos import get_or_clone_video_if_exists
 
 SAMPLE_USER = User(
     id=uuid.uuid4(),
@@ -53,11 +54,11 @@ class MockAsyncSession:
         stmt_str = str(stmt).lower()
         if "clips" in stmt_str:
             return MockResult(scalars_list=self.clips)
-        
+
         # Check if querying other users' videos
         if "status = :status_1" in stmt_str or "completed" in stmt_str:
             return MockResult(scalar=self.existing_video)
-        
+
         # Else querying current user's video (first check)
         return MockResult(scalar=None)
 
@@ -91,14 +92,25 @@ def setup_dependency_overrides():
 
 
 class TestResearchNiche:
-
     def test_standardize_youtube_url(self):
         urls = [
-            ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            (
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
             ("https://youtu.be/dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            ("https://www.youtube.com/shorts/dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            ("https://www.youtube.com/embed/dQw4w9WgXcQ", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
-            ("https://youtube.com/watch?v=dQw4w9WgXcQ&feature=share", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            (
+                "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            (
+                "https://www.youtube.com/embed/dQw4w9WgXcQ",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
+            (
+                "https://youtube.com/watch?v=dQw4w9WgXcQ&feature=share",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            ),
         ]
         for src, expected in urls:
             assert standardize_youtube_url(src) == expected
@@ -118,7 +130,7 @@ class TestResearchNiche:
             transcript={"text": "Original Transcript"},
             segments=[{"start": 0, "end": 10, "text": "Original Transcript", "viral_score": 0.9}],
             language="en",
-            platform="youtube_shorts"
+            platform="youtube_shorts",
         )
         original_clips = [
             Clip(
@@ -130,17 +142,14 @@ class TestResearchNiche:
                 score=0.9,
                 file_url=f"clips/{original_video_id}/0001.mp4",
                 thumbnail_url=f"clips/{original_video_id}/0001_thumb.jpg",
-                title="Clip Title"
+                title="Clip Title",
             )
         ]
 
         db = MockAsyncSession(existing_video=original_video, clips=original_clips)
-        
+
         cloned = await get_or_clone_video_if_exists(
-            db,
-            "https://youtu.be/dQw4w9WgXcQ",
-            "youtube_shorts",
-            SAMPLE_USER.id
+            db, "https://youtu.be/dQw4w9WgXcQ", "youtube_shorts", SAMPLE_USER.id
         )
 
         assert cloned is not None
@@ -148,14 +157,14 @@ class TestResearchNiche:
         assert cloned.status == VideoStatusEnum.COMPLETED
         assert cloned.duration == 60.0
         assert cloned.title == "Original Video"
-        
+
         # Verify storage copying was triggered
         mock_copy_prefix.assert_any_call(f"clips/{original_video_id}/", f"clips/{cloned.id}/")
-        
+
         # Check added models in session
         added_clips = [obj for obj in db.added if isinstance(obj, Clip)]
         added_jobs = [obj for obj in db.added if isinstance(obj, Job)]
-        
+
         assert len(added_clips) == 1
         assert added_clips[0].video_id == cloned.id
         # Verify video ID in the paths was replaced
@@ -180,18 +189,19 @@ class TestResearchNiche:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.text = mock_xml
-        
+
         async def mock_get(url, *args, **kwargs):
             # Assert URL is Google News Search due to niche parameter
             assert "news.google.com/rss/search" in url
             assert "sports" in url
             return mock_response
+
         mock_client.get = mock_get
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get("/api/research/trends?source=google&niche=sports")
-            
+
         assert r.status_code == 200
         data = r.json()
         assert len(data["trends"]) == 1
@@ -211,18 +221,23 @@ class TestResearchNiche:
             "is_valid": True,
             "reason": "This is a highly credible and viral sports topic.",
             "recommended_keywords": ["soccer", "championship"],
-            "fact_check_report": "Verified by multiple sources."
+            "fact_check_report": "Verified by multiple sources.",
         }
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
-        mock_response.json = MagicMock(return_value={"response": json.dumps(validation_response_json)})
+        mock_response.json = MagicMock(
+            return_value={"response": json.dumps(validation_response_json)}
+        )
         mock_client.post.return_value = mock_response
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.post("/api/research/validate-topic", json={"topic": "Messi wins championship", "niche": "sports"})
-            
+            r = await ac.post(
+                "/api/research/validate-topic",
+                json={"topic": "Messi wins championship", "niche": "sports"},
+            )
+
         assert r.status_code == 200
         data = r.json()
         assert data["credibility_score"] == 0.9
@@ -254,7 +269,7 @@ class TestResearchNiche:
             status=VideoStatusEnum.COMPLETED,
             duration=50.0,
             title="Messi Golden Goal",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
         mock_get_or_clone.return_value = cloned_video
 
@@ -262,7 +277,7 @@ class TestResearchNiche:
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.post(
                 "/api/research/import-trend",
-                json={"topic": "Messi Goal", "niche": "sports", "platform": "youtube_shorts"}
+                json={"topic": "Messi Goal", "niche": "sports", "platform": "youtube_shorts"},
             )
 
         assert r.status_code == 200
@@ -280,11 +295,11 @@ class TestResearchNiche:
         mock_instance.extract_info.return_value = {
             "title": "Direct Video Title",
             "duration": 120,
-            "uploader": "Direct Uploader"
+            "uploader": "Direct Uploader",
         }
         mock_ytdl.return_value.__enter__.return_value = mock_instance
         mock_get_or_clone.return_value = None  # Force new video creation
-        
+
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.post(
@@ -293,10 +308,10 @@ class TestResearchNiche:
                     "topic": "Direct Topic",
                     "niche": "general",
                     "platform": "youtube_shorts",
-                    "url": "https://www.youtube.com/watch?v=direct12345"
-                }
+                    "url": "https://www.youtube.com/watch?v=direct12345",
+                },
             )
-            
+
         assert r.status_code == 200
         data = r.json()
         assert data["source_url"] == "https://www.youtube.com/watch?v=direct12345"

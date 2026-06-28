@@ -32,7 +32,9 @@ def _update_ytdlp() -> None:
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode == 0:
             logger.info("yt-dlp updated to latest version")
@@ -143,9 +145,19 @@ def get_media_duration(file_path: str, default: float = 0.0) -> float:
     """
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            capture_output=True, text=True, timeout=15,
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                file_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return float(result.stdout.strip())
     except (ValueError, subprocess.TimeoutExpired, OSError):
@@ -185,4 +197,3 @@ def standardize_youtube_url(url: str) -> str:
         pass
 
     return url
-

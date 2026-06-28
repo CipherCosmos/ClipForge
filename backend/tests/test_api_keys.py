@@ -1,10 +1,11 @@
 """Tests for API key system."""
-from unittest.mock import AsyncMock, MagicMock, patch
+
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.api_keys import generate_api_key, authenticate_api_key
+from app.core.api_keys import authenticate_api_key, generate_api_key
 
 
 def test_generate_api_key_format():

@@ -9,7 +9,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.security import get_current_user
 from app.database import get_db
-from app.models.job import Job, JobStatusEnum, JobTypeEnum
+from app.models.job import Job, JobTypeEnum
 from app.models.user import User
 from app.models.video import Video
 
@@ -29,9 +29,7 @@ class TranscriptUpdate(BaseModel):
 
 
 async def _get_video(video_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Video:
-    result = await db.execute(
-        select(Video).where(Video.id == video_id, Video.user_id == user_id)
-    )
+    result = await db.execute(select(Video).where(Video.id == video_id, Video.user_id == user_id))
     video = result.scalar_one_or_none()
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
@@ -69,12 +67,14 @@ async def get_transcript(
     segments = video.transcript.get("segments", [])
     enriched = []
     for i, seg in enumerate(segments):
-        enriched.append({
-            "start": seg.get("start", 0.0),
-            "end": seg.get("end", 0.0),
-            "text": seg.get("text", ""),
-            "index": i,
-        })
+        enriched.append(
+            {
+                "start": seg.get("start", 0.0),
+                "end": seg.get("end", 0.0),
+                "text": seg.get("text", ""),
+                "index": i,
+            }
+        )
     return {
         "language": video.transcript.get("language", video.language or "en"),
         "full_text": video.transcript.get("full_text", ""),
@@ -122,12 +122,14 @@ async def update_transcript(
 
     enriched = []
     for i, seg in enumerate(merged):
-        enriched.append({
-            "start": seg.get("start", 0.0),
-            "end": seg.get("end", 0.0),
-            "text": seg.get("text", ""),
-            "index": i,
-        })
+        enriched.append(
+            {
+                "start": seg.get("start", 0.0),
+                "end": seg.get("end", 0.0),
+                "text": seg.get("text", ""),
+                "index": i,
+            }
+        )
 
     return {
         "language": video.transcript.get("language", video.language or "en"),
@@ -145,6 +147,7 @@ async def regenerate_transcript(
     video = await _get_video(video_id, current_user.id, db)
 
     from app.services.pipeline import start_pipeline
+
     await start_pipeline(db, video, force_transcribe=True)
 
     result = await db.execute(
@@ -180,6 +183,7 @@ async def export_transcript_srt(
     srt_content = "\n".join(lines)
 
     from fastapi.responses import PlainTextResponse
+
     return PlainTextResponse(
         content=srt_content,
         media_type="text/plain",
@@ -224,19 +228,21 @@ async def import_transcript_srt(
                 i += 1
             text = " ".join(text_parts)
             if text:
-                segments.append({
-                    "start": start,
-                    "end": end,
-                    "text": text,
-                    "score": 0.0,
-                    "emotion_intensity": 0.0,
-                    "keyword_density": 0.0,
-                    "scene_change_intensity": 0.0,
-                    "audio_energy": 0.0,
-                    "viral_score": 0.0,
-                    "hook_score": 0.0,
-                    "engagement_potential": 0.0,
-                })
+                segments.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "text": text,
+                        "score": 0.0,
+                        "emotion_intensity": 0.0,
+                        "keyword_density": 0.0,
+                        "scene_change_intensity": 0.0,
+                        "audio_energy": 0.0,
+                        "viral_score": 0.0,
+                        "hook_score": 0.0,
+                        "engagement_potential": 0.0,
+                    }
+                )
         else:
             i += 1
 
@@ -246,7 +252,9 @@ async def import_transcript_srt(
     full_text = " ".join(s["text"] for s in segments)
 
     video.transcript = {
-        "language": video.transcript.get("language", video.language or "en") if video.transcript else "en",
+        "language": video.transcript.get("language", video.language or "en")
+        if video.transcript
+        else "en",
         "segments": segments,
         "full_text": full_text,
     }
@@ -258,12 +266,14 @@ async def import_transcript_srt(
 
     enriched = []
     for i, seg in enumerate(segments):
-        enriched.append({
-            "start": seg.get("start", 0.0),
-            "end": seg.get("end", 0.0),
-            "text": seg.get("text", ""),
-            "index": i,
-        })
+        enriched.append(
+            {
+                "start": seg.get("start", 0.0),
+                "end": seg.get("end", 0.0),
+                "text": seg.get("text", ""),
+                "index": i,
+            }
+        )
 
     return {
         "language": video.transcript.get("language", "en"),

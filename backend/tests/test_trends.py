@@ -19,7 +19,8 @@ class TestComputeTrendBoost:
 
     def test_three_plus_keywords_capped_at_three(self):
         result = compute_trend_boost(
-            "AI tech crypto bitcoin", trending=["AI", "tech", "crypto", "bitcoin"],
+            "AI tech crypto bitcoin",
+            trending=["AI", "tech", "crypto", "bitcoin"],
         )
         assert result == 3.0
 
@@ -28,6 +29,7 @@ class TestFetchTrendingKeywords:
     @patch("app.services.trends.httpx.Client")
     def test_returns_list_on_api_failure(self, mock_client):
         import httpx
+
         mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPError(
             "API unavailable"
         )

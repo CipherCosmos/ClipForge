@@ -27,7 +27,7 @@ NICHE_KEYWORDS = {
     "tech": "technology OR tech startup OR AI OR gadget",
     "code": "software programming OR developer OR coding OR github",
     "trading": "stock trading OR crypto market OR option trading OR bitcoin",
-    "investing": "investing OR index funds OR personal finance OR mutual funds"
+    "investing": "investing OR index funds OR personal finance OR mutual funds",
 }
 
 NICHE_SUBREDDITS = {
@@ -38,9 +38,8 @@ NICHE_SUBREDDITS = {
     "tech": "technology",
     "code": "programming",
     "trading": "wallstreetbets",
-    "investing": "investing"
+    "investing": "investing",
 }
-
 
 
 class AnalyzeRequest(BaseModel):
@@ -59,9 +58,10 @@ async def get_trends(
     geo: str | None = None,
     niche: str | None = None,
     q: str | None = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Get trending topics/articles/videos from various feeds (google, youtube, reddit, news) with niche filtering and custom query search."""
+    """Get trending topics/articles/videos from various feeds (google, youtube, reddit, news)
+    with niche filtering and custom query search."""
     prefs = current_user.preferences or {}
     if geo is None:
         geo = prefs.get("research_location", "US")
@@ -73,12 +73,19 @@ async def get_trends(
     niche_lower = niche.lower() if niche else None
 
     if source_lower == "google":
-        # Google Trends RSS doesn't support custom queries, so we fall back to Google News Search if niche/query is specified
+        # Google Trends RSS doesn't support custom queries, so we fall back
+        # to Google News Search if niche/query is specified
         if q:
-            url = f"https://news.google.com/rss/search?q={q}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            url = (
+                f"https://news.google.com/rss/search?q={q}"
+                f"&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            )
         elif niche_lower and niche_lower in NICHE_KEYWORDS:
             niche_query = NICHE_KEYWORDS[niche_lower]
-            url = f"https://news.google.com/rss/search?q={niche_query}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            url = (
+                f"https://news.google.com/rss/search?q={niche_query}"
+                f"&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            )
         else:
             url = f"https://trends.google.com/trending/rss?geo={geo_upper}"
 
@@ -93,25 +100,35 @@ async def get_trends(
                 if channel is not None:
                     for item in channel.findall("item"):
                         title_elem = item.find("title")
-                        
+
                         # Google Trends uses approx_traffic, news/search does not
-                        traffic_elem = item.find("{https://trends.google.com/trending/rss}approx_traffic")
+                        traffic_elem = item.find(
+                            "{https://trends.google.com/trending/rss}approx_traffic"
+                        )
                         title = title_elem.text if title_elem is not None else ""
-                        traffic = traffic_elem.text if traffic_elem is not None else "Trending Topic"
-                        
+                        traffic = (
+                            traffic_elem.text if traffic_elem is not None else "Trending Topic"
+                        )
+
                         # Strip news publishers in news search results if needed
-                        if title and " - " in title and (q or (niche_lower and niche_lower in NICHE_KEYWORDS)):
+                        if (
+                            title
+                            and " - " in title
+                            and (q or (niche_lower and niche_lower in NICHE_KEYWORDS))
+                        ):
                             title = title.rsplit(" - ", 1)[0]
 
                         link_elem = item.find("link")
                         link = link_elem.text if link_elem is not None else ""
 
-                        items.append({
-                            "topic": title,
-                            "traffic": traffic,
-                            "url": link,
-                            "source": "google",
-                        })
+                        items.append(
+                            {
+                                "topic": title,
+                                "traffic": traffic,
+                                "url": link,
+                                "source": "google",
+                            }
+                        )
                 if items:
                     return {"trends": items[:20]}
         except Exception as e:
@@ -127,7 +144,8 @@ async def get_trends(
             url = f"https://www.reddit.com/r/{subreddit}/.rss"
 
         headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            " AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
@@ -144,12 +162,14 @@ async def get_trends(
                     link = link_elem.attrib.get("href", "") if link_elem is not None else ""
 
                     if title:
-                        items.append({
-                            "topic": title,
-                            "traffic": f"Hot in r/{subreddit}" if not q else "Reddit Match",
-                            "url": link,
-                            "source": "reddit",
-                        })
+                        items.append(
+                            {
+                                "topic": title,
+                                "traffic": f"Hot in r/{subreddit}" if not q else "Reddit Match",
+                                "url": link,
+                                "source": "reddit",
+                            }
+                        )
                 if items:
                     return {"trends": items[:20]}
         except Exception as e:
@@ -157,13 +177,21 @@ async def get_trends(
 
     elif source_lower == "news":
         if q:
-            url = f"https://news.google.com/rss/search?q={q}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            url = (
+                f"https://news.google.com/rss/search?q={q}"
+                f"&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            )
         elif niche_lower and niche_lower in NICHE_KEYWORDS:
             niche_query = NICHE_KEYWORDS[niche_lower]
-            url = f"https://news.google.com/rss/search?q={niche_query}&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            url = (
+                f"https://news.google.com/rss/search?q={niche_query}"
+                f"&hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            )
         else:
-            url = f"https://news.google.com/rss?hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
-            
+            url = (
+                f"https://news.google.com/rss?hl=en-{geo_upper}&gl={geo_upper}&ceid={geo_upper}:en"
+            )
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url)
@@ -181,12 +209,16 @@ async def get_trends(
                     link = link_elem.text if link_elem is not None else ""
 
                     if title:
-                        items.append({
-                            "topic": title,
-                            "traffic": "Top Headline" if not niche_lower else f"{niche.capitalize()} News",
-                            "url": link,
-                            "source": "news",
-                        })
+                        items.append(
+                            {
+                                "topic": title,
+                                "traffic": "Top Headline"
+                                if not niche_lower
+                                else f"{niche.capitalize()} News",
+                                "url": link,
+                                "source": "news",
+                            }
+                        )
                 if items:
                     return {"trends": items[:20]}
         except Exception as e:
@@ -195,14 +227,17 @@ async def get_trends(
     elif source_lower == "youtube":
         try:
             import yt_dlp
+
             ydl_opts = {
-                'extract_flat': True,
-                'skip_download': True,
-                'quiet': True,
-                'playlist_items': '1-15',
+                "extract_flat": True,
+                "skip_download": True,
+                "quiet": True,
+                "playlist_items": "1-15",
             }
-            exclude_query = "-how -make -create -tutorial -secrets -tips -learn -algorithm -grow -guide -course"
-            
+            exclude_query = (
+                "-how -make -create -tutorial -secrets -tips -learn -algorithm -grow -guide -course"
+            )
+
             if q:
                 query = f"{q} {exclude_query}"
                 url = f"ytsearch15:{query}"
@@ -212,7 +247,7 @@ async def get_trends(
                 url = f"ytsearch15:{query}"
             else:
                 url = "https://www.youtube.com/feed/trending"
-                
+
             entries = []
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -226,7 +261,7 @@ async def get_trends(
                         entries = res.get("entries", [])
                 else:
                     raise feed_err
-                    
+
             items = []
             for entry in entries:
                 if entry:
@@ -236,9 +271,9 @@ async def get_trends(
                     traffic_desc = f"by {uploader}"
                     if views:
                         if views >= 1000000:
-                            traffic_desc += f" • {views/1000000:.1f}M views"
+                            traffic_desc += f" • {views / 1000000:.1f}M views"
                         elif views >= 1000:
-                            traffic_desc += f" • {views/1000:.0f}K views"
+                            traffic_desc += f" • {views / 1000:.0f}K views"
                         else:
                             traffic_desc += f" • {views} views"
 
@@ -247,12 +282,14 @@ async def get_trends(
                         video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
 
                     if title:
-                        items.append({
-                            "topic": title,
-                            "traffic": traffic_desc,
-                            "url": video_url,
-                            "source": "youtube",
-                        })
+                        items.append(
+                            {
+                                "topic": title,
+                                "traffic": traffic_desc,
+                                "url": video_url,
+                                "source": "youtube",
+                            }
+                        )
             if items:
                 return {"trends": items}
         except Exception as e:
@@ -260,35 +297,38 @@ async def get_trends(
 
     # Fallback to local trending keywords
     from app.services.trends import FALLBACK_TRENDS
+
     selected = random.sample(FALLBACK_TRENDS, min(10, len(FALLBACK_TRENDS)))
     return {"trends": [{"topic": kw, "traffic": "Trending", "source": "google"} for kw in selected]}
 
 
 @router.post("/analyze")
 async def analyze_trend_topic(
-    payload: AnalyzeRequest,
-    current_user: User = Depends(get_current_user)
+    payload: AnalyzeRequest, current_user: User = Depends(get_current_user)
 ):
-    """Analyze a trending topic using Ollama. Outputs rich script outline, hook variations, viral triggers, and CTA."""
+    """Analyze a trending topic using Ollama. Outputs rich script outline, hook variations,
+    viral triggers, and CTA."""
     topic = payload.topic
     tone = payload.tone or "viral"
 
     prompt = (
-        f"You are a viral shorts creator. Analyze the trending topic: '{topic}' with a '{tone}' tone.\n"
-        "Provide a plan to create a viral short video about this topic. Rate its viral potential and return ONLY valid JSON in this exact structure:\n"
+        f"You are a viral shorts creator. Analyze the trending topic: "
+        f"'{topic}' with a '{tone}' tone.\n"
+        "Provide a plan to create a viral short video about this topic. "
+        "Rate its viral potential and return ONLY valid JSON in this exact structure:\n"
         "{\n"
-        "  \"viral_potential\": 0.0-1.0,\n"
-        "  \"video_concept\": \"Brief description of the visual and concept\",\n"
-        "  \"suggested_search_query\": \"Keywords to search on YouTube to find source footage\",\n"
-        "  \"punchy_hook\": \"First 3-second attention grabber text\",\n"
-        "  \"hook_variations\": [\"alternative hook 1\", \"alternative hook 2\", \"alternative hook 3\"],\n"
-        "  \"script_body\": \"30-60s script content divided with [Visual: B-roll cue] notes\",\n"
-        "  \"call_to_action\": \"CTA to get subscribers/likes\",\n"
-        "  \"pin_comment\": \"Engagement-driving question to pin in the comments\",\n"
-        "  \"hashtags\": [\"tag1\", \"tag2\"],\n"
-        "  \"viral_triggers\": [\"trigger 1\", \"trigger 2\"],\n"
-        "  \"audio_music_recommendation\": \"Music style or mood recommendation\",\n"
-        "  \"target_audience\": \"Niche or demographic description\"\n"
+        '  "viral_potential": 0.0-1.0,\n'
+        '  "video_concept": "Brief description of the visual and concept",\n'
+        '  "suggested_search_query": "Keywords to search on YouTube to find source footage",\n'
+        '  "punchy_hook": "First 3-second attention grabber text",\n'
+        '  "hook_variations": ["alternative hook 1", "alternative hook 2", "alternative hook 3"],\n'
+        '  "script_body": "30-60s script content divided with [Visual: B-roll cue] notes",\n'
+        '  "call_to_action": "CTA to get subscribers/likes",\n'
+        '  "pin_comment": "Engagement-driving question to pin in the comments",\n'
+        '  "hashtags": ["tag1", "tag2"],\n'
+        '  "viral_triggers": ["trigger 1", "trigger 2"],\n'
+        '  "audio_music_recommendation": "Music style or mood recommendation",\n'
+        '  "target_audience": "Niche or demographic description"\n'
         "}"
     )
 
@@ -303,15 +343,19 @@ async def analyze_trend_topic(
         "hook_variations": [
             f"Did you hear about {topic}?",
             f"The truth about {topic} just leaked...",
-            f"Why everyone is talking about {topic} right now!"
+            f"Why everyone is talking about {topic} right now!",
         ],
-        "script_body": f"[Visual: show trending charts of {topic}] Here is why {topic} is trending right now... [Visual: show B-roll related to {topic}] It's taking over the internet! What do you think about this?",
+        "script_body": (
+            f"[Visual: show trending charts of {topic}] Here is why {topic} "
+            f"is trending right now... [Visual: show B-roll related to {topic}] "
+            f"It's taking over the internet! What do you think about this?"
+        ),
         "call_to_action": "Subscribe for daily trending updates!",
         "pin_comment": f"What is your opinion on {topic}? Let me know below!",
         "hashtags": [topic.replace(" ", ""), "trending", "news"],
         "viral_triggers": ["Trend Wave", "Curiosity Gap"],
         "audio_music_recommendation": "Suspenseful, high-energy synthwave beat",
-        "target_audience": "General audience interested in trending topics"
+        "target_audience": "General audience interested in trending topics",
     }
 
     try:
@@ -330,21 +374,19 @@ async def analyze_trend_topic(
 
 
 @router.post("/crawl")
-async def crawl_videos(
-    payload: CrawlRequest,
-    current_user: User = Depends(get_current_user)
-):
+async def crawl_videos(payload: CrawlRequest, current_user: User = Depends(get_current_user)):
     """Scrape/crawl YouTube search results using flat extraction in yt-dlp with type filtering."""
     query = payload.query
     video_type = payload.video_type or "all"
     logger.info("Crawling YouTube search for query: %s (type: %s)", query, video_type)
     try:
         import yt_dlp
+
         ydl_opts = {
-            'extract_flat': True,
-            'skip_download': True,
-            'quiet': True,
-            'playlist_items': '1-10',
+            "extract_flat": True,
+            "skip_download": True,
+            "quiet": True,
+            "playlist_items": "1-10",
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             res = ydl.extract_info(f"ytsearch10:{query}", download=False)
@@ -369,13 +411,15 @@ async def crawl_videos(
                 if not video_url and item.get("id"):
                     video_url = f"https://www.youtube.com/watch?v={item.get('id')}"
 
-                results.append({
-                    "title": item.get("title", "Untitled Video"),
-                    "url": video_url,
-                    "duration": duration,
-                    "uploader": item.get("uploader") or item.get("channel", "Unknown Channel"),
-                    "view_count": item.get("view_count"),
-                })
+                results.append(
+                    {
+                        "title": item.get("title", "Untitled Video"),
+                        "url": video_url,
+                        "duration": duration,
+                        "uploader": item.get("uploader") or item.get("channel", "Unknown Channel"),
+                        "view_count": item.get("view_count"),
+                    }
+                )
 
             # Slice results to top 5 matches
             return {"videos": results[:5]}
@@ -398,8 +442,7 @@ class ImportTrendRequest(BaseModel):
 
 @router.post("/validate-topic")
 async def validate_topic(
-    payload: ValidateTopicRequest,
-    current_user: User = Depends(get_current_user)
+    payload: ValidateTopicRequest, current_user: User = Depends(get_current_user)
 ):
     """Validate a topic using local LLM to rate credibility, virality and niche alignment."""
     topic = payload.topic
@@ -408,12 +451,13 @@ async def validate_topic(
     prompt = (
         f"You are an advanced AI Trend Quality Assurer and Fact-Checker.\n"
         f"Analyze this topic for a short-form video:\n"
-        f"Topic: \"{topic}\"\n"
-        f"Target Niche: \"{niche}\"\n\n"
+        f'Topic: "{topic}"\n'
+        f'Target Niche: "{niche}"\n\n'
         f"Evaluate this topic across these dimensions:\n"
-        f"1. Credibility: Is this topic based on real, verifiable events/news, or is it fake news, clickbait, sensationalized gossip, or spam?\n"
+        f"1. Credibility: Is this topic based on real, verifiable events/news, "
+        f"or is it fake news, clickbait, sensationalized gossip, or spam?\n"
         f"2. Virality: Does it have high interest, high curiosity gap, or emotional triggers?\n"
-        f"3. Niche Alignment: Does it fit the target niche of \"{niche}\"?\n"
+        f'3. Niche Alignment: Does it fit the target niche of "{niche}"?\n'
         f"4. Virality Breakdown: Rate each of the 8 viral score components from 0.0 to 1.0:\n"
         f"   - hook_score\n"
         f"   - emotion_intensity\n"
@@ -423,29 +467,38 @@ async def validate_topic(
         f"   - audio_event_score\n"
         f"   - audio_energy\n"
         f"   - speaker_confidence\n"
-        f"5. Claims Verification: Identify 2-3 main claims in this topic and label their status as 'Verified', 'Unverified', 'Clickbait', or 'Speculative' along with a short 1-sentence verdict.\n\n"
+        f"5. Claims Verification: Identify 2-3 main claims in this topic and label their "
+        f"status as 'Verified', 'Unverified', 'Clickbait', or 'Speculative' "
+        f"along with a short 1-sentence verdict.\n\n"
         f"Return ONLY a valid JSON object in this exact format:\n"
         f"{{\n"
-        f"  \"credibility_score\": <0.0-1.0>,\n"
-        f"  \"virality_score\": <0.0-1.0>,\n"
-        f"  \"niche_alignment\": <0.0-1.0>,\n"
-        f"  \"is_valid\": <true or false, must be true ONLY if credibility_score >= 0.5 AND virality_score >= 0.5 AND niche_alignment >= 0.5>,\n"
-        f"  \"reason\": \"Detailed explanation of credibility, potential misinformation or clickbait warnings, and virality potential.\",\n"
-        f"  \"recommended_keywords\": [\"keyword1\", \"keyword2\", \"keyword3\"],\n"
-        f"  \"fact_check_report\": \"Brief summary of fact check, identifying main claims and their reliability.\",\n"
-        f"  \"virality_breakdown\": {{\n"
-        f"     \"hook_score\": <0.0-1.0>,\n"
-        f"     \"emotion_intensity\": <0.0-1.0>,\n"
-        f"     \"engagement_potential\": <0.0-1.0>,\n"
-        f"     \"keyword_density\": <0.0-1.0>,\n"
-        f"     \"scene_change_intensity\": <0.0-1.0>,\n"
-        f"     \"audio_event_score\": <0.0-1.0>,\n"
-        f"     \"audio_energy\": <0.0-1.0>,\n"
-        f"     \"speaker_confidence\": <0.0-1.0>\n"
+        f'  "credibility_score": <0.0-1.0>,\n'
+        f'  "virality_score": <0.0-1.0>,\n'
+        f'  "niche_alignment": <0.0-1.0>,\n'
+        f'  "is_valid": <true or false, must be true ONLY if credibility_score >= 0.5 '
+        f'AND virality_score >= 0.5 AND niche_alignment >= 0.5>,\n'
+        f'  "reason": "Detailed explanation of credibility, potential misinformation '
+        f'or clickbait warnings, and virality potential.",\n'
+        f'  "recommended_keywords": ["keyword1", "keyword2", "keyword3"],\n'
+        f'  "fact_check_report": "Brief summary of fact check, identifying main claims '
+        f'and their reliability.",\n'
+        f'  "virality_breakdown": {{\n'
+        f'     "hook_score": <0.0-1.0>,\n'
+        f'     "emotion_intensity": <0.0-1.0>,\n'
+        f'     "engagement_potential": <0.0-1.0>,\n'
+        f'     "keyword_density": <0.0-1.0>,\n'
+        f'     "scene_change_intensity": <0.0-1.0>,\n'
+        f'     "audio_event_score": <0.0-1.0>,\n'
+        f'     "audio_energy": <0.0-1.0>,\n'
+        f'     "speaker_confidence": <0.0-1.0>\n'
         f"  }},\n"
-        f"  \"claims\": [\n"
-        f"     {{\"claim\": \"first claim text\", \"status\": \"Verified|Unverified|Clickbait|Speculative\", \"verdict\": \"short verdict\"}},\n"
-        f"     {{\"claim\": \"second claim text\", \"status\": \"Verified|Unverified|Clickbait|Speculative\", \"verdict\": \"short verdict\"}}\n"
+        f'  "claims": [\n'
+        f'     {{"claim": "first claim text", '
+        f'"status": "Verified|Unverified|Clickbait|Speculative", '
+        f'"verdict": "short verdict"}},\n'
+        f'     {{"claim": "second claim text", '
+        f'"status": "Verified|Unverified|Clickbait|Speculative", '
+        f'"verdict": "short verdict"}}\n'
         f"  ]\n"
         f"}}"
     )
@@ -457,7 +510,8 @@ async def validate_topic(
         "is_valid": True,
         "reason": f"Topic '{topic}' shows solid news alignment and high interest.",
         "recommended_keywords": [topic, f"{topic} news"],
-        "fact_check_report": "Verified against recent news updates. No major misinformation flags detected.",
+        "fact_check_report": "Verified against recent news updates."
+        " No major misinformation flags detected.",
         "virality_breakdown": {
             "hook_score": 0.8,
             "emotion_intensity": 0.7,
@@ -466,15 +520,24 @@ async def validate_topic(
             "scene_change_intensity": 0.5,
             "audio_event_score": 0.6,
             "audio_energy": 0.5,
-            "speaker_confidence": 0.8
+            "speaker_confidence": 0.8,
         },
         "claims": [
-            {"claim": f"{topic} is trending on social platforms", "status": "Verified", "verdict": "Confirmed by multiple news channels and RSS indicators."},
-            {"claim": f"High engagement expectation for {topic}", "status": "Speculative", "verdict": "Based on historical topic performance."}
-        ]
+            {
+                "claim": f"{topic} is trending on social platforms",
+                "status": "Verified",
+                "verdict": "Confirmed by multiple news channels and RSS indicators.",
+            },
+            {
+                "claim": f"High engagement expectation for {topic}",
+                "status": "Speculative",
+                "verdict": "Based on historical topic performance.",
+            },
+        ],
     }
 
     from app.services.llm import generate_llm_async
+
     try:
         data = await generate_llm_async(prompt, format_json=True, timeout=25.0)
         response_text = data.get("response", "{}")
@@ -494,15 +557,17 @@ async def validate_topic(
 async def import_trend(
     payload: ImportTrendRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """Automatically search YouTube for the top short matching the trend and import it (using cloning if already processed)."""
+    """Automatically search YouTube for the top short matching the trend and import it
+    (using cloning if already processed)."""
     topic = payload.topic
     niche = payload.niche or "general"
     platform = payload.platform or "youtube_shorts"
     url = payload.url
 
     from app.services.platforms import get_preset
+
     preset = get_preset(platform)
 
     video_url = None
@@ -511,11 +576,12 @@ async def import_trend(
     # 1. Search YouTube or parse direct URL for matching video
     try:
         import yt_dlp
+
         ydl_opts = {
-            'extract_flat': True,
-            'skip_download': True,
-            'quiet': True,
-            'playlist_items': '1-3',
+            "extract_flat": True,
+            "skip_download": True,
+            "quiet": True,
+            "playlist_items": "1-3",
         }
 
         # Check if direct YouTube URL was passed
@@ -526,7 +592,7 @@ async def import_trend(
                 "url": url,
                 "title": f"Trending short on {topic}",
                 "duration": None,
-                "uploader": "YouTube"
+                "uploader": "YouTube",
             }
             # Attempt to fetch metadata for the direct URL
             try:
@@ -537,7 +603,9 @@ async def import_trend(
                         entry["duration"] = res.get("duration") or entry["duration"]
                         entry["uploader"] = res.get("uploader") or entry["uploader"]
             except Exception as metadata_err:
-                logger.warning("Failed to fetch metadata for direct URL '%s': %s", url, metadata_err)
+                logger.warning(
+                    "Failed to fetch metadata for direct URL '%s': %s", url, metadata_err
+                )
         else:
             # Try different search query fallbacks in sequence to guarantee we find a video
             queries_to_try = []
@@ -549,7 +617,7 @@ async def import_trend(
             if niche != "general":
                 queries_to_try.append(f"trending {niche}")
             queries_to_try.append("trending news")
-            
+
             entries = []
             for q_try in queries_to_try:
                 logger.info("One-click trend import searching YouTube for query: %s", q_try)
@@ -563,15 +631,19 @@ async def import_trend(
                 except Exception as search_err:
                     logger.warning("Search failed for query '%s': %s", q_try, search_err)
                     continue
-                    
+
             if not entries or not entries[0]:
                 video_url = "https://www.youtube.com/watch?v=RMINSD7MmT4"
-                logger.warning("No entries found in YouTube search. Falling back to NASA public domain video: %s", video_url)
+                logger.warning(
+                    "No entries found in YouTube search. "
+                    "Falling back to NASA public domain video: %s",
+                    video_url,
+                )
                 entry = {
                     "url": video_url,
                     "title": f"Trending topic: {topic}",
                     "duration": 180.0,
-                    "uploader": "NASA"
+                    "uploader": "NASA",
                 }
             else:
                 # Get first valid entry
@@ -581,16 +653,19 @@ async def import_trend(
                     video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
                 if not video_url:
                     video_url = "https://www.youtube.com/watch?v=RMINSD7MmT4"
-                    logger.warning("Could not extract video URL from entries. Falling back to NASA public domain video: %s", video_url)
+                    logger.warning(
+                        "Could not extract video URL from entries. "
+                        "Falling back to NASA public domain video: %s",
+                        video_url,
+                    )
                     entry["url"] = video_url
                     entry["title"] = entry.get("title") or f"Trending topic: {topic}"
                     entry["duration"] = entry.get("duration") or 180.0
                     entry["uploader"] = entry.get("uploader") or "NASA"
 
         # 2. Re-use cloning/deduplication layer
-        from app.api.videos import get_or_clone_video_if_exists, _video_to_response
+        from app.api.videos import _video_to_response, get_or_clone_video_if_exists
         from app.models.video import Video, VideoStatusEnum
-        from app.models.job import Job, JobTypeEnum, JobStatusEnum
 
         cloned = await get_or_clone_video_if_exists(db, video_url, preset.name, current_user.id)
         if cloned:
@@ -599,6 +674,7 @@ async def import_trend(
 
         # 3. Create a new video and enqueue
         from app.services.video import standardize_youtube_url
+
         standardized = standardize_youtube_url(video_url)
 
         video = Video(
@@ -614,6 +690,7 @@ async def import_trend(
         await db.refresh(video)
 
         from app.services.pipeline import start_pipeline
+
         await start_pipeline(db, video)
 
         return await _video_to_response(video, db)
@@ -622,4 +699,3 @@ async def import_trend(
     except Exception as e:
         logger.error("Failed to auto-import trend video: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to auto-import trend video: {str(e)}")
-

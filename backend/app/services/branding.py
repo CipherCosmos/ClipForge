@@ -1,4 +1,5 @@
 """Branding service — watermark, logo, colors, intro/outro."""
+
 import logging
 import os
 import subprocess
@@ -8,19 +9,19 @@ logger = logging.getLogger(__name__)
 
 _DRAWTEXT_AVAILABLE = None
 
+
 def has_drawtext() -> bool:
     """Check if drawtext filter is available in FFmpeg."""
     global _DRAWTEXT_AVAILABLE
     if _DRAWTEXT_AVAILABLE is not None:
         return _DRAWTEXT_AVAILABLE
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-filters"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["ffmpeg", "-filters"], capture_output=True, text=True, timeout=10)
         _DRAWTEXT_AVAILABLE = "drawtext" in result.stdout
     except Exception:
         _DRAWTEXT_AVAILABLE = False
     return _DRAWTEXT_AVAILABLE
+
 
 def escape_ffmpeg_text(text: str) -> str:
     """Escapes text for FFmpeg drawtext filter."""
@@ -35,37 +36,45 @@ def escape_ffmpeg_text(text: str) -> str:
         text = text.replace(ch, f"\\{ch}")
     return text
 
+
 def get_font_path(bold: bool = False, light: bool = False) -> str:
     """Find a suitable system font path or custom font path."""
     candidates = []
     if bold:
-        candidates.extend([
-            "fonts/Inter-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-            "/Library/Fonts/Arial Bold.ttf",
-            "/System/Library/Fonts/Supplemental/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ])
+        candidates.extend(
+            [
+                "fonts/Inter-Bold.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                "/Library/Fonts/Arial Bold.ttf",
+                "/System/Library/Fonts/Supplemental/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            ]
+        )
     elif light:
-        candidates.extend([
-            "fonts/Inter-Light.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ])
+        candidates.extend(
+            [
+                "fonts/Inter-Light.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
+                "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+        )
     else:
-        candidates.extend([
-            "fonts/Inter-Regular.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/Library/Fonts/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        ])
+        candidates.extend(
+            [
+                "fonts/Inter-Regular.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
+                "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ]
+        )
     for path in candidates:
         if os.path.exists(path):
             return path
     return ""
+
 
 @dataclass
 class BrandConfig:
@@ -76,6 +85,7 @@ class BrandConfig:
     font_family: str = ""
     intro_clip_path: str = ""
     outro_clip_path: str = ""
+
 
 def build_watermark_filter(brand: BrandConfig, video_w: int, video_h: int) -> list[str]:
     """Build FFmpeg drawtext filter for watermark overlay."""
@@ -93,12 +103,12 @@ def build_watermark_filter(brand: BrandConfig, video_w: int, video_h: int) -> li
             "bottom-right": f"x={video_w - 20}-text_w:y={video_h - 20}-text_h",
         }
         pos = pos_map.get(brand.watermark_position, pos_map["bottom-right"])
-        
+
         font_path = brand.font_family
         if not font_path or not os.path.exists(font_path):
             font_path = get_font_path(bold=True)
         font_arg = f":fontfile='{font_path}'" if font_path else ""
-        
+
         escaped_watermark = escape_ffmpeg_text(brand.watermark_text)
         filters.append(
             f"drawtext=text='{escaped_watermark}':{pos}:"
@@ -106,6 +116,7 @@ def build_watermark_filter(brand: BrandConfig, video_w: int, video_h: int) -> li
             f"{font_arg}:box=1:boxcolor=black@0.3:boxborderw=8"
         )
     return filters
+
 
 def build_caption_style_filter(
     text: str,
@@ -118,12 +129,12 @@ def build_caption_style_filter(
         return []
 
     base_y = video_h - 180
-    
+
     is_bold = "bold" in style or style in ("neon", "highlight")
     is_light = style == "minimal"
     font_path = get_font_path(bold=is_bold, light=is_light)
     font_arg = f":fontfile='{font_path}'" if font_path else ""
-    
+
     escaped_text = escape_ffmpeg_text(text)
 
     styles = {
@@ -157,11 +168,17 @@ def build_caption_style_filter(
     result = styles.get(style, styles["classic"])
     return [result]
 
+
 def build_intro_filter(intro_path: str, video_w: int, video_h: int) -> list[str]:
     """Build FFmpeg concat filter for intro video."""
     if not intro_path or not os.path.exists(intro_path):
         return []
-    return [f"movie={intro_path}:f=mp4 [intro]; [intro] scale={video_w}:{video_h}:force_original_aspect_ratio=decrease,pad={video_w}:{video_h}:(ow-iw)/2:(oh-ih)/2 [intro_scaled]"]
+    return [
+        f"movie={intro_path}:f=mp4 [intro]; [intro]"
+        f" scale={video_w}:{video_h}:force_original_aspect_ratio=decrease,"
+        f"pad={video_w}:{video_h}:(ow-iw)/2:(oh-ih)/2 [intro_scaled]"
+    ]
+
 
 def generate_title_card(
     title: str,
@@ -175,9 +192,19 @@ def generate_title_card(
         logger.warning("FFmpeg drawtext filter not available, rendering black video for title card")
         try:
             cmd = [
-                "ffmpeg", "-y",
-                "-f", "lavfi", "-i", f"color=c=black:s={video_w}x{video_h}:d=3",
-                "-c:v", "libx264", "-preset", "fast", "-t", "3", output_path,
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s={video_w}x{video_h}:d=3",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-t",
+                "3",
+                output_path,
             ]
             subprocess.run(cmd, capture_output=True, timeout=30, check=True)
             return output_path
@@ -186,26 +213,36 @@ def generate_title_card(
             return None
 
     color = brand.primary_color if brand else "#FF6B35"
-    bg = "black"
-    
+
     font_bold = get_font_path(bold=True)
     font_reg = get_font_path(bold=False)
     font_bold_arg = f":fontfile='{font_bold}'" if font_bold else ""
     font_reg_arg = f":fontfile='{font_reg}'" if font_reg else ""
-    
+
     escaped_title = escape_ffmpeg_text(title)
 
     try:
         cmd = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={video_w}x{video_h}:d=3",
-            "-vf", (
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s={video_w}x{video_h}:d=3",
+            "-vf",
+            (
                 f"drawtext=text='{escaped_title}':x=(w-text_w)/2:y=(h-text_h)/2-50:"
                 f"fontsize=56:fontcolor=white{font_bold_arg},"
                 f"drawtext=text='ClipForge':x=(w-text_w)/2:y=(h-text_h)/2+50:"
                 f"fontsize=32:fontcolor={color}{font_reg_arg}"
             ),
-            "-c:v", "libx264", "-preset", "fast", "-t", "3", output_path,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-t",
+            "3",
+            output_path,
         ]
         subprocess.run(cmd, capture_output=True, timeout=30, check=True)
         return output_path

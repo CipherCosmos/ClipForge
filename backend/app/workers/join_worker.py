@@ -4,6 +4,7 @@ Each worker saves its results independently to the DB segments.
 This function reads from DB, merges, and triggers render when both are done.
 Called by NLP or scene_detect when they complete.
 """
+
 import logging
 import uuid
 
@@ -12,7 +13,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video
 from app.services.scoring import calculate_viral_score
-from app.workers.celery_app import SyncSessionLocal, celery_app
+from app.workers.celery_app import SyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,11 @@ def check_and_merge(video_id: str) -> bool:
         video.segments = segments
         flag_modified(video, "segments")
 
-        job = session.query(Job).filter(
-            and_(Job.video_id == video_uuid, Job.type == JobTypeEnum.HIGHLIGHT)
-        ).first()
+        job = (
+            session.query(Job)
+            .filter(and_(Job.video_id == video_uuid, Job.type == JobTypeEnum.HIGHLIGHT))
+            .first()
+        )
         if job:
             job.status = JobStatusEnum.DONE
             job.progress = 1.0
@@ -75,10 +78,11 @@ def check_and_merge(video_id: str) -> bool:
         logger.info("Merged NLP + Scene Detect results for video %s", video_id[:8])
 
         from app.workers.render import run_render
+
         run_render.delay(video_id)
         return True
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Merge check failed for video %s", video_id)
         return False
     finally:

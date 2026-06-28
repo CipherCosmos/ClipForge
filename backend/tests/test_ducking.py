@@ -10,11 +10,10 @@ class TestBuildDuckFilter:
         assert result == "volume=enable='between(t,0.0,5.0)':volume=-6.0dB"
 
     def test_multiple_segments_returns_combined_expression(self):
-        result = build_duck_filter([
-            {"start": 0.0, "end": 5.0},
-            {"start": 10.0, "end": 15.0},
-        ])
-        assert (
-            result
-            == "volume=enable='between(t,0.0,5.0)+between(t,10.0,15.0)':volume=-6.0dB"
+        result = build_duck_filter(
+            [
+                {"start": 0.0, "end": 5.0},
+                {"start": 10.0, "end": 15.0},
+            ]
         )
+        assert result == "volume=enable='between(t,0.0,5.0)+between(t,10.0,15.0)':volume=-6.0dB"

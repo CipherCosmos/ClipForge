@@ -1,4 +1,5 @@
 """Plan gating utilities — enforce free/pro limits."""
+
 import logging
 
 from fastapi import HTTPException
@@ -37,9 +38,7 @@ async def check_subscription_active(user: User, db_session) -> bool:
     Returns True for free users (they just get limited features, no errors)."""
     if user.plan != "pro":
         return True
-    result = await db_session.execute(
-        select(Subscription).where(Subscription.user_id == user.id)
-    )
+    result = await db_session.execute(select(Subscription).where(Subscription.user_id == user.id))
     sub = result.scalar_one_or_none()
     if not sub or sub.status in ("canceled", "past_due", "incomplete", "incomplete_expired"):
         return False
@@ -53,9 +52,7 @@ async def check_upload_limit(user: User, db_session) -> None:
 
     limits = get_limits(user)
 
-    result = await db_session.execute(
-        select(func.count(Video.id)).where(Video.user_id == user.id)
-    )
+    result = await db_session.execute(select(func.count(Video.id)).where(Video.user_id == user.id))
     count = result.scalar() or 0
     if count >= limits["max_videos"]:
         msg = (

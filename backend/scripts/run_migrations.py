@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Run Alembic migrations to bring the database up to date."""
+
 import subprocess
 import sys
 from pathlib import Path

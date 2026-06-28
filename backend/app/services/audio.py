@@ -1,4 +1,5 @@
 """Audio extraction service stubs for scene_detect worker."""
+
 import logging
 import os
 import subprocess
@@ -13,9 +14,23 @@ def extract_full_audio(video_path: str) -> str:
     os.close(fd)
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
-             "-ar", "16000", "-ac", "1", audio_path],
-            capture_output=True, check=True, timeout=300,
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                video_path,
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                audio_path,
+            ],
+            capture_output=True,
+            check=True,
+            timeout=300,
         )
         return audio_path
     except Exception:
@@ -31,10 +46,27 @@ def extract_audio_segment(video_path: str, start: float, end: float) -> str:
     os.close(fd)
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(start), "-i", video_path,
-             "-t", str(duration), "-vn", "-acodec", "pcm_s16le",
-             "-ar", "16000", "-ac", "1", audio_path],
-            capture_output=True, check=True, timeout=120,
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                video_path,
+                "-t",
+                str(duration),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                audio_path,
+            ],
+            capture_output=True,
+            check=True,
+            timeout=120,
         )
         return audio_path
     except Exception:

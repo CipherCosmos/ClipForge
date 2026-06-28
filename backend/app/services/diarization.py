@@ -36,7 +36,6 @@ def diarize_audio(audio_path: str) -> list[dict[str, Any]]:
 def _silero_vad(audio_path: str) -> list[dict[str, Any]]:
     """Run Silero VAD directly using silero-vad package (in-process, ONNX, ~30MB)."""
     try:
-        import soundfile as sf
         from silero_vad import get_speech_timestamps, read_audio
 
         wav = read_audio(audio_path)
@@ -74,7 +73,9 @@ def _diarize_fallback(audio_path: str) -> list[dict[str, Any]]:
         y, sr = librosa.load(audio_path, sr=16000, mono=True)
         frame_length = int(0.025 * sr)
         hop_length = int(0.010 * sr)
-        spectral = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=frame_length, hop_length=hop_length)[0]
+        spectral = librosa.feature.spectral_centroid(
+            y=y, sr=sr, n_fft=frame_length, hop_length=hop_length
+        )[0]
         rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
 
         # Simple threshold: speech when RMS > threshold and spectral centroid > 200Hz
@@ -92,23 +93,27 @@ def _diarize_fallback(audio_path: str) -> list[dict[str, Any]]:
             elif not is_speech[i] and in_speech:
                 duration = (i - start_frame) * hop_length / sr
                 if duration > 0.3:
-                    segments.append({
-                        "start": round(start_frame * hop_length / sr, 2),
-                        "end": round(i * hop_length / sr, 2),
-                        "speaker": "SPEAKER_00",
-                        "confidence": 0.5,
-                    })
+                    segments.append(
+                        {
+                            "start": round(start_frame * hop_length / sr, 2),
+                            "end": round(i * hop_length / sr, 2),
+                            "speaker": "SPEAKER_00",
+                            "confidence": 0.5,
+                        }
+                    )
                 in_speech = False
 
         if in_speech:
             duration = (len(is_speech) - start_frame) * hop_length / sr
             if duration > 0.3:
-                segments.append({
-                    "start": round(start_frame * hop_length / sr, 2),
-                    "end": round(len(is_speech) * hop_length / sr, 2),
-                    "speaker": "SPEAKER_00",
-                    "confidence": 0.5,
-                })
+                segments.append(
+                    {
+                        "start": round(start_frame * hop_length / sr, 2),
+                        "end": round(len(is_speech) * hop_length / sr, 2),
+                        "speaker": "SPEAKER_00",
+                        "confidence": 0.5,
+                    }
+                )
 
         return segments
     except Exception:
@@ -135,10 +140,7 @@ def assign_speaker_scores(
         seg_end = seg["end"]
 
         # Find overlapping diarization segments
-        overlapping = [
-            d for d in diarization
-            if d["start"] < seg_end and d["end"] > seg_start
-        ]
+        overlapping = [d for d in diarization if d["start"] < seg_end and d["end"] > seg_start]
 
         if not overlapping:
             seg["speaker_confidence"] = 0.3
@@ -151,8 +153,7 @@ def assign_speaker_scores(
         if len(unique_speakers) == 1:
             # Single speaker — ideal for shorts
             total_duration = sum(
-                min(d["end"], seg_end) - max(d["start"], seg_start)
-                for d in overlapping
+                min(d["end"], seg_end) - max(d["start"], seg_start) for d in overlapping
             )
             seg_duration = seg_end - seg_start
             coverage = total_duration / seg_duration if seg_duration > 0 else 0

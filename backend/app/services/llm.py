@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import re
-import json
 from typing import Any, Dict, Optional
 
 import httpx
@@ -11,6 +10,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _http_client: httpx.Client | None = None
+
+
 def _get_http():
     global _http_client
     if _http_client is None:
@@ -25,20 +26,20 @@ def extract_json_from_text(text: str) -> str:
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
     if match:
         return match.group(1).strip()
-    
+
     # Try to find the outer-most curly braces or square brackets
     start_curly = text.find("{")
     start_bracket = text.find("[")
-    
+
     if start_curly != -1 and (start_bracket == -1 or start_curly < start_bracket):
         end_curly = text.rfind("}")
         if end_curly != -1:
-            return text[start_curly:end_curly+1]
+            return text[start_curly : end_curly + 1]
     elif start_bracket != -1:
         end_bracket = text.rfind("]")
         if end_bracket != -1:
-            return text[start_bracket:end_bracket+1]
-            
+            return text[start_bracket : end_bracket + 1]
+
     return text
 
 
@@ -46,7 +47,7 @@ def generate_llm(
     prompt: str,
     system_prompt: Optional[str] = None,
     format_json: bool = False,
-    timeout: float = 30.0
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
     """Route LLM generation to Groq API (if configured) or local Ollama (fallback)."""
     if settings.GROQ_API_KEY:
@@ -55,7 +56,7 @@ def generate_llm(
             url = "https://api.groq.com/openai/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
             messages = []
             if system_prompt:
@@ -89,7 +90,7 @@ def generate_llm(
         "prompt": prompt,
         "stream": False,
     }
-    # Note: We omit payload["format"] = "json" because Ollama's format constraints 
+    # Note: We omit payload["format"] = "json" because Ollama's format constraints
     # fail with thinking models (like Qwen 3.5 thinking models).
     # Instead, we request JSON in prompt and parse/extract it via extract_json_from_text.
     if system_prompt:
@@ -113,7 +114,7 @@ async def generate_llm_async(
     prompt: str,
     system_prompt: Optional[str] = None,
     format_json: bool = False,
-    timeout: float = 30.0
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
     """Async wrapper around generate_llm — runs sync logic in a thread."""
     return await asyncio.to_thread(generate_llm, prompt, system_prompt, format_json, timeout)

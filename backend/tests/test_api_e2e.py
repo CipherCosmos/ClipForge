@@ -3,6 +3,7 @@
 Tests the full API surface: auth, videos, clips, jobs.
 Uses dependency overrides to avoid needing PostgreSQL, MinIO, and other services.
 """
+
 import os
 import sys
 import uuid
@@ -195,9 +196,7 @@ class TestClipsE2E:
     async def test_list_clips_requires_auth(self):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get(
-                "/api/clips?video_id=00000000-0000-0000-0000-000000000001"
-            )
+            r = await ac.get("/api/clips?video_id=00000000-0000-0000-0000-000000000001")
         assert r.status_code == 401
 
     @pytest.mark.asyncio
@@ -213,7 +212,6 @@ class TestClipsE2E:
 
         class MockSession:
             async def execute(self, stmt):
-                from tests.test_api_e2e import MockResult
                 clip = MagicMock()
                 clip.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
                 clip.video_id = uuid.UUID("00000000-0000-0000-0000-000000000002")
@@ -239,10 +237,17 @@ class TestClipsE2E:
         app.dependency_overrides[get_db] = lambda: MockSession()
 
         transport = ASGITransport(app=app)
-        with patch("app.api.clips.list_files", return_value=["dubs/00000000-0000-0000-0000-000000000002/00000000-0000-0000-0000-000000000001_es.mp4"]), \
-             patch("app.api.clips.get_presigned_url", return_value="http://minio/signed_url.mp4"):
+        with (
+            patch(
+                "app.api.clips.list_files",
+                return_value=[
+                    "dubs/00000000-0000-0000-0000-000000000002/00000000-0000-0000-0000-000000000001_es.mp4"
+                ],
+            ),
+            patch("app.api.clips.get_presigned_url", return_value="http://minio/signed_url.mp4"),
+        ):
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                resp = await ac.get(f"/api/clips/00000000-0000-0000-0000-000000000001")
+                resp = await ac.get("/api/clips/00000000-0000-0000-0000-000000000001")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -255,9 +260,7 @@ class TestJobsE2E:
     async def test_list_jobs_requires_auth(self):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get(
-                "/api/jobs?video_id=00000000-0000-0000-0000-000000000001"
-            )
+            r = await ac.get("/api/jobs?video_id=00000000-0000-0000-0000-000000000001")
         assert r.status_code == 401
 
     @pytest.mark.asyncio

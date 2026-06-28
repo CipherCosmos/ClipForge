@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,9 +67,7 @@ async def list_clips(
     if not video_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
-    count_result = await db.execute(
-        select(func.count(Clip.id)).where(Clip.video_id == video_id)
-    )
+    count_result = await db.execute(select(func.count(Clip.id)).where(Clip.video_id == video_id))
     total = count_result.scalar()
 
     result = await db.execute(
@@ -106,9 +105,7 @@ async def get_clip(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Clip).where(Clip.id == clip_id)
-    )
+    result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
@@ -130,10 +127,7 @@ async def update_clip(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Clip).join(Video).where(
-            Clip.id == clip_id,
-            Video.user_id == current_user.id
-        )
+        select(Clip).join(Video).where(Clip.id == clip_id, Video.user_id == current_user.id)
     )
     clip = result.scalar_one_or_none()
     if not clip:
@@ -149,9 +143,6 @@ async def update_clip(
     return _clip_to_response(clip)
 
 
-from pydantic import BaseModel
-
-
 class ClipDubRequest(BaseModel):
     target_lang: str
 
@@ -163,9 +154,7 @@ async def dub_clip_endpoint(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Clip).where(Clip.id == clip_id)
-    )
+    result = await db.execute(select(Clip).where(Clip.id == clip_id))
     clip = result.scalar_one_or_none()
     if not clip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
@@ -177,6 +166,7 @@ async def dub_clip_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Clip not found")
 
     from app.workers.dubbing import run_dub_clip
+
     run_dub_clip.delay(str(clip_id), payload.target_lang)
 
     return _clip_to_response(clip)

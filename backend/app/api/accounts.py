@@ -1,4 +1,5 @@
 """Platform accounts API — manage connected social accounts."""
+
 import logging
 from datetime import datetime, timezone
 
@@ -73,10 +74,12 @@ async def list_accounts(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(PlatformAccount).where(
+        select(PlatformAccount)
+        .where(
             PlatformAccount.user_id == current_user.id,
-            PlatformAccount.is_active == True,
-        ).order_by(PlatformAccount.platform, PlatformAccount.label)
+            PlatformAccount.is_active,
+        )
+        .order_by(PlatformAccount.platform, PlatformAccount.label)
     )
     return [_to_response(a) for a in result.scalars().all()]
 
@@ -110,6 +113,7 @@ async def update_account(
     db: AsyncSession = Depends(get_db),
 ):
     import uuid
+
     result = await db.execute(
         select(PlatformAccount).where(
             PlatformAccount.id == uuid.UUID(account_id),
@@ -146,6 +150,7 @@ async def delete_account(
     db: AsyncSession = Depends(get_db),
 ):
     import uuid
+
     result = await db.execute(
         select(PlatformAccount).where(
             PlatformAccount.id == uuid.UUID(account_id),
@@ -168,6 +173,7 @@ async def test_account(
     db: AsyncSession = Depends(get_db),
 ):
     import uuid
+
     result = await db.execute(
         select(PlatformAccount).where(
             PlatformAccount.id == uuid.UUID(account_id),

@@ -52,6 +52,7 @@ def _ensure_argos_index():
             return
         try:
             import argostranslate.package
+
             argostranslate.package.update_package_index()
             _argos_initialized = True
         except Exception as exc:
@@ -84,12 +85,8 @@ def _get_argos_model(lang_pair: str):
             None,
         )
         if package_to_install:
-            argostranslate.package.install_from_path(
-                package_to_install.download()
-            )
-        return argostranslate.translate.get_translation_from_codes(
-            from_code, to_code
-        )
+            argostranslate.package.install_from_path(package_to_install.download())
+        return argostranslate.translate.get_translation_from_codes(from_code, to_code)
     except ImportError:
         logger.debug("argostranslate not installed, translation unavailable")
     except Exception as exc:
@@ -101,6 +98,7 @@ def _translate_via_llm(text: str, target_lang: str, source_lang: str) -> str | N
     """Translate text using LLM (Groq or local Ollama)."""
     try:
         from app.services.llm import generate_llm
+
         source_name = SUPPORTED_LANGUAGES.get(source_lang, source_lang)
         target_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
         prompt = (
@@ -127,11 +125,9 @@ def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> s
     # Try MyMemory API first (extremely fast, free, no keys, high availability)
     try:
         import httpx
+
         url = "https://api.mymemory.translated.net/get"
-        params = {
-            "q": text,
-            "langpair": f"{source_lang}|{target_lang}"
-        }
+        params = {"q": text, "langpair": f"{source_lang}|{target_lang}"}
         resp = httpx.get(url, params=params, timeout=5.0)
         if resp.status_code == 200:
             data = resp.json()

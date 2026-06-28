@@ -2,6 +2,7 @@ import os
 import ssl
 
 from celery import Celery
+from celery.signals import worker_process_init
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -67,12 +68,10 @@ celery_app.autodiscover_tasks(["app.workers"])
 def setup_cleanup(sender, **kwargs):
     try:
         from app.workers.cleanup import reset_stale_jobs
+
         reset_stale_jobs()
     except Exception:
         pass
-
-
-from celery.signals import worker_process_init
 
 
 @worker_process_init.connect

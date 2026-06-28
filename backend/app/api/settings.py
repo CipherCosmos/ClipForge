@@ -1,4 +1,5 @@
 """User preferences/settings API."""
+
 import logging
 
 from fastapi import APIRouter, Depends
@@ -23,6 +24,7 @@ DEFAULT_PREFERENCES = {
     "enable_moderation": True,
 }
 
+
 @router.get("")
 async def get_settings(
     current_user: User = Depends(get_current_user),
@@ -33,6 +35,7 @@ async def get_settings(
     prefs = user.preferences or {}
     merged = {**DEFAULT_PREFERENCES, **prefs}
     return merged
+
 
 @router.put("")
 async def update_settings(

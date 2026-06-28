@@ -1,4 +1,5 @@
 """API key authentication and management with names and expiration."""
+
 import hashlib
 import logging
 import secrets
@@ -17,7 +18,9 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-def generate_api_key(name: str = "Default", expire_days: Optional[int] = None) -> tuple[str, str, str, Optional[datetime]]:
+def generate_api_key(
+    name: str = "Default", expire_days: Optional[int] = None
+) -> tuple[str, str, str, Optional[datetime]]:
     raw = f"cf_{secrets.token_hex(24)}"
     hashed = hashlib.sha256(raw.encode()).hexdigest()
     prefix = raw[:16]
@@ -27,14 +30,14 @@ def generate_api_key(name: str = "Default", expire_days: Optional[int] = None) -
 
 async def authenticate_api_key(token: str) -> Optional[User]:
     """Look up an API key and return the owning user, or None."""
-    prefix = token[:16]
+    token[:16]
 
     hashed = hashlib.sha256(token.encode()).hexdigest()
     async with async_session() as session:
         result = await session.execute(
             select(ApiKey)
             .options(joinedload(ApiKey.user))
-            .where(ApiKey.key_hash == hashed, ApiKey.is_active == True)
+            .where(ApiKey.key_hash == hashed, ApiKey.is_active)
         )
         api_key = result.scalar_one_or_none()
         if api_key is None or api_key.is_expired:

@@ -23,6 +23,7 @@ def _get_sensevoice_model():
     if _model is None:
         try:
             from funasr import AutoModel
+
             kwargs = dict(
                 model="iic/SenseVoiceSmall",
                 disable_update=True,
@@ -41,9 +42,19 @@ def _get_audio_duration(audio_path: str) -> float:
     """Get audio file duration using ffprobe, returns estimated duration as fallback."""
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-            capture_output=True, text=True, timeout=10
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                audio_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return float(result.stdout.strip())
     except Exception:
@@ -69,37 +80,81 @@ def _analyze_with_sensevoice(audio_path: str) -> dict[str, Any]:
                 text = getattr(item, "text", "")
 
             # Count tag occurrences for confidence scaling
-            for tag, emotion_name in [("<|angry|>", "angry"), ("<|sad|>", "sad"), ("<|happy|>", "happy"), ("<|neutral|>", "neutral")]:
+            for tag, emotion_name in [
+                ("<|angry|>", "angry"),
+                ("<|sad|>", "sad"),
+                ("<|happy|>", "happy"),
+                ("<|neutral|>", "neutral"),
+            ]:
                 if tag in text:
                     tag_count += 1
                     confidence = min(0.95, 0.6 + tag_count * 0.1)
-                    emotions.append({
-                        "start": 0.0, "end": audio_duration,
-                        "emotion": emotion_name,
-                        "confidence": round(confidence, 2),
-                    })
+                    emotions.append(
+                        {
+                            "start": 0.0,
+                            "end": audio_duration,
+                            "emotion": emotion_name,
+                            "confidence": round(confidence, 2),
+                        }
+                    )
 
-            for tag, event_name in [("<|laughter|>", "laughter"), ("<|applause|>", "applause"), ("<|music|>", "music"), ("<|singing|>", "music")]:
+            for tag, event_name in [
+                ("<|laughter|>", "laughter"),
+                ("<|applause|>", "applause"),
+                ("<|music|>", "music"),
+                ("<|singing|>", "music"),
+            ]:
                 if tag in text:
                     tag_count += 1
                     confidence = min(0.95, 0.6 + tag_count * 0.1)
-                    events.append({
-                        "start": 0.0, "end": audio_duration,
-                        "event": event_name,
-                        "confidence": round(confidence, 2),
-                    })
+                    events.append(
+                        {
+                            "start": 0.0,
+                            "end": audio_duration,
+                            "event": event_name,
+                            "confidence": round(confidence, 2),
+                        }
+                    )
 
             # Process direct attributes from model output
             if isinstance(item, dict):
                 if "emotion" in item and item["emotion"]:
-                    emotions.append({"start": item.get("start", 0.0), "end": item.get("end", audio_duration), "emotion": item["emotion"], "confidence": item.get("confidence", 0.7)})
+                    emotions.append(
+                        {
+                            "start": item.get("start", 0.0),
+                            "end": item.get("end", audio_duration),
+                            "emotion": item["emotion"],
+                            "confidence": item.get("confidence", 0.7),
+                        }
+                    )
                 if "event" in item and item["event"]:
-                    events.append({"start": item.get("start", 0.0), "end": item.get("end", audio_duration), "event": item["event"], "confidence": item.get("confidence", 0.7)})
+                    events.append(
+                        {
+                            "start": item.get("start", 0.0),
+                            "end": item.get("end", audio_duration),
+                            "event": item["event"],
+                            "confidence": item.get("confidence", 0.7),
+                        }
+                    )
             else:
                 if hasattr(item, "emotion") and item.emotion:
-                    emotions.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", audio_duration), "emotion": item.emotion, "confidence": getattr(item, "confidence", 0.7)})
+                    emotions.append(
+                        {
+                            "start": getattr(item, "start", 0.0),
+                            "end": getattr(item, "end", audio_duration),
+                            "emotion": item.emotion,
+                            "confidence": getattr(item, "confidence", 0.7),
+                        }
+                    )
                 if hasattr(item, "event") and item.event:
-                    events.append({"start": getattr(item, "start", 0.0), "end": getattr(item, "end", audio_duration), "event": item.event, "confidence": getattr(item, "confidence", 0.7)})
+                    events.append(
+                        {
+                            "start": getattr(item, "start", 0.0),
+                            "end": getattr(item, "end", audio_duration),
+                            "event": item.event,
+                            "confidence": getattr(item, "confidence", 0.7),
+                        }
+                    )
 
         return {"emotions": emotions, "events": events}
     except Exception as e:
@@ -112,6 +167,7 @@ def _extract_prosody_features(audio_path: str) -> dict[str, float]:
     try:
         import librosa
         import numpy as np
+
         y, sr = librosa.load(audio_path, sr=16000, mono=True)
         if len(y) == 0:
             return {}
@@ -145,13 +201,26 @@ def extract_segment_emotion(video_path: str, start: float, end: float) -> dict[s
     try:
         fd, tmp_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
-        subprocess.run([
-            "ffmpeg", "-y",
-            "-ss", str(start), "-i", video_path,
-            "-t", str(end - start),
-            "-ar", "16000", "-ac", "1",
-            tmp_path,
-        ], capture_output=True, check=True, timeout=120)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(start),
+                "-i",
+                video_path,
+                "-t",
+                str(end - start),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                tmp_path,
+            ],
+            capture_output=True,
+            check=True,
+            timeout=120,
+        )
         return _analyze_with_sensevoice(tmp_path)
     except Exception as e:
         logger.debug("Segment emotion extraction failed: %s", e)
@@ -170,6 +239,7 @@ def extract_full_audio_features(audio_path: str) -> dict[str, Any]:
     """Extract prosody arrays from full audio file in a single load (in-process)."""
     try:
         import librosa
+
         y, sr = librosa.load(audio_path, sr=16000, mono=True)
         if len(y) == 0:
             return {}
@@ -198,6 +268,7 @@ def get_segment_prosody_from_full(features: dict, start: float, end: float) -> d
 
     try:
         import numpy as np
+
         sr = features["sr"]
         hop_length = features["hop_length"]
         rms = features["rms"]
@@ -229,5 +300,3 @@ def get_segment_prosody_from_full(features: dict, start: float, end: float) -> d
     except Exception as e:
         logger.debug("Slicing segment prosody failed: %s", e)
         return {}
-
-

@@ -1,4 +1,5 @@
 """Webhook model for persistent webhook storage."""
+
 import uuid
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String

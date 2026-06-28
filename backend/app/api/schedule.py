@@ -1,11 +1,13 @@
 """Scheduled publishing endpoints."""
+
 import logging
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func as sa_func
+from sqlalchemy import func as sa_func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_token, encrypt_token
@@ -132,7 +134,9 @@ async def create_schedule(
         access_token=encrypt_token(access_token),
         platform_account_id=platform_account_id,
         platform_user_id=req.platform_user_id or (account.platform_user_id if account else None),
-        dub_language=req.dub_language if req.dub_language and req.dub_language != "original" else None,
+        dub_language=req.dub_language
+        if req.dub_language and req.dub_language != "original"
+        else None,
         scheduled_at=scheduled_dt,
         status="pending",
     )
@@ -159,7 +163,9 @@ async def list_schedules(
     result = await db.execute(query)
     schedules = result.scalars().all()
 
-    count_query = select(sa_func.count()).select_from(Schedule).where(Schedule.user_id == current_user.id)
+    count_query = (
+        select(sa_func.count()).select_from(Schedule).where(Schedule.user_id == current_user.id)
+    )
     if status:
         count_query = count_query.where(Schedule.status == status)
     count_result = await db.execute(count_query)
@@ -219,12 +225,18 @@ async def publish_now(
         # Resolve file URL — use dubbed version if dub_language is set
         file_url = schedule.clip.file_url
         if schedule.dub_language:
-            dub_object_name = f"dubs/{schedule.clip.video_id}/{schedule.clip_id}_{schedule.dub_language}.mp4"
+            dub_object_name = (
+                f"dubs/{schedule.clip.video_id}/{schedule.clip_id}_{schedule.dub_language}.mp4"
+            )
             try:
                 all_dub_files = list_files(f"dubs/{schedule.clip.video_id}/")
                 if dub_object_name in all_dub_files:
                     file_url = get_presigned_url(dub_object_name)
-                    logger.info("Publishing dubbed version: lang=%s, clip=%s", schedule.dub_language, schedule.clip_id)
+                    logger.info(
+                        "Publishing dubbed version: lang=%s, clip=%s",
+                        schedule.dub_language,
+                        schedule.clip_id,
+                    )
                 else:
                     logger.warning("Dubbed file not found for scheduled publish, using original")
             except Exception as e:

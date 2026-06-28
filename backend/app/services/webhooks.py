@@ -2,6 +2,7 @@
 
 Persistent DB-backed storage with retry logic (3 attempts, exponential backoff).
 """
+
 import asyncio
 import logging
 import time
@@ -45,7 +46,7 @@ async def unregister_webhook(db: AsyncSession, video_id: str, url: str) -> bool:
         select(Webhook).where(
             Webhook.video_id == uuid.UUID(video_id),
             Webhook.url == url,
-            Webhook.is_active == True,
+            Webhook.is_active,
         )
     )
     hook = result.scalar_one_or_none()
@@ -61,15 +62,13 @@ async def get_webhooks_for_video(db: AsyncSession, video_id: str) -> list[Webhoo
     result = await db.execute(
         select(Webhook).where(
             Webhook.video_id == uuid.UUID(video_id),
-            Webhook.is_active == True,
+            Webhook.is_active,
         )
     )
     return list(result.scalars().all())
 
 
-async def fire_event_async(
-    db: AsyncSession, video_id: str, event: str, data: dict[str, Any]
-):
+async def fire_event_async(db: AsyncSession, video_id: str, event: str, data: dict[str, Any]):
     """Fire event to all registered webhooks asynchronously.
 
     Uses ``asyncio.create_task`` so the caller is not blocked.
@@ -77,9 +76,7 @@ async def fire_event_async(
     hooks = await get_webhooks_for_video(db, video_id)
     for hook in hooks:
         if event in hook.events or "all" in hook.events:
-            asyncio.create_task(
-                _fire_with_retry_async(hook, video_id, event, data)
-            )
+            asyncio.create_task(_fire_with_retry_async(hook, video_id, event, data))
 
 
 # ── Sync (Celery worker) functions ─────────────────────────────────────
@@ -98,7 +95,7 @@ def fire_event_sync(video_id: str, event: str, data: dict[str, Any]):
             session.query(Webhook)
             .filter(
                 Webhook.video_id == uuid.UUID(video_id),
-                Webhook.is_active == True,
+                Webhook.is_active,
             )
             .all()
         )
@@ -123,9 +120,7 @@ def _build_payload(video_id: str, event: str, data: dict[str, Any]) -> dict[str,
     }
 
 
-async def _fire_with_retry_async(
-    hook: Webhook, video_id: str, event: str, data: dict[str, Any]
-):
+async def _fire_with_retry_async(hook: Webhook, video_id: str, event: str, data: dict[str, Any]):
     """Attempt a single webhook delivery up to 3 times with exponential backoff."""
     payload = _build_payload(video_id, event, data)
     delays = [1, 3]
@@ -142,19 +137,24 @@ async def _fire_with_retry_async(
             if attempt < 2:
                 logger.warning(
                     "Webhook %s attempt %d/3 failed: %s -> %s: %s",
-                    str_id, attempt + 1, event, hook.url, e,
+                    str_id,
+                    attempt + 1,
+                    event,
+                    hook.url,
+                    e,
                 )
                 await asyncio.sleep(delays[attempt])
             else:
                 logger.error(
                     "Webhook %s failed after 3 attempts: %s -> %s: %s",
-                    str_id, event, hook.url, e,
+                    str_id,
+                    event,
+                    hook.url,
+                    e,
                 )
 
 
-def _fire_with_retry_sync(
-    hook: Webhook, video_id: str, event: str, data: dict[str, Any]
-):
+def _fire_with_retry_sync(hook: Webhook, video_id: str, event: str, data: dict[str, Any]):
     """Synchronous delivery with retry – used by Celery workers."""
     payload = _build_payload(video_id, event, data)
     delays = [1, 3]
@@ -171,11 +171,18 @@ def _fire_with_retry_sync(
             if attempt < 2:
                 logger.warning(
                     "Webhook %s attempt %d/3 failed: %s -> %s: %s",
-                    str_id, attempt + 1, event, hook.url, e,
+                    str_id,
+                    attempt + 1,
+                    event,
+                    hook.url,
+                    e,
                 )
                 time.sleep(delays[attempt])
             else:
                 logger.error(
                     "Webhook %s failed after 3 attempts: %s -> %s: %s",
-                    str_id, event, hook.url, e,
+                    str_id,
+                    event,
+                    hook.url,
+                    e,
                 )

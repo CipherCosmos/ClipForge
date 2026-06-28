@@ -32,9 +32,7 @@ async def create_checkout_session(
     _ensure_stripe()
 
     # Find or create Stripe customer
-    result = await db.execute(
-        select(Subscription).where(Subscription.user_id == user.id)
-    )
+    result = await db.execute(select(Subscription).where(Subscription.user_id == user.id))
     existing = result.scalar_one_or_none()
     customer_id = existing.stripe_customer_id if existing else None
 
@@ -54,9 +52,7 @@ async def create_checkout_session(
 async def create_portal_session(user: User, db: AsyncSession) -> str:
     _ensure_stripe()
 
-    result = await db.execute(
-        select(Subscription).where(Subscription.user_id == user.id)
-    )
+    result = await db.execute(select(Subscription).where(Subscription.user_id == user.id))
     sub = result.scalar_one_or_none()
     if not sub:
         raise ValueError("No subscription found")
@@ -73,9 +69,7 @@ async def handle_webhook_event(payload: bytes, sig_header: str) -> None:
     _ensure_stripe()
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
-        )
+        event = stripe.Webhook.construct_event(payload, sig_header, settings.STRIPE_WEBHOOK_SECRET)
     except ValueError:
         logger.error("Invalid Stripe webhook payload")
         raise
@@ -103,13 +97,9 @@ async def handle_webhook_event(payload: bytes, sig_header: str) -> None:
         await db.commit()
 
 
-async def _get_user_by_stripe_customer(
-    stripe_customer_id: str, db: AsyncSession
-) -> Optional[User]:
+async def _get_user_by_stripe_customer(stripe_customer_id: str, db: AsyncSession) -> Optional[User]:
     result = await db.execute(
-        select(Subscription).where(
-            Subscription.stripe_customer_id == stripe_customer_id
-        )
+        select(Subscription).where(Subscription.stripe_customer_id == stripe_customer_id)
     )
     sub = result.scalar_one_or_none()
     if sub:
@@ -118,7 +108,9 @@ async def _get_user_by_stripe_customer(
     return None
 
 
-async def _get_sub_and_user(subscription_id: str, db: AsyncSession) -> tuple[Subscription | None, User | None]:
+async def _get_sub_and_user(
+    subscription_id: str, db: AsyncSession
+) -> tuple[Subscription | None, User | None]:
     """Fetch subscription by Stripe ID and its owning user."""
     result = await db.execute(
         select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
@@ -152,21 +144,15 @@ async def _handle_checkout_completed(session_data: dict, db: AsyncSession) -> No
         if user:
             user.plan = "pro"
             # Upsert subscription
-            result = await db.execute(
-                select(Subscription).where(Subscription.user_id == user_id)
-            )
+            result = await db.execute(select(Subscription).where(Subscription.user_id == user_id))
             sub = result.scalar_one_or_none()
             if sub:
                 sub.stripe_subscription_id = subscription_id
                 sub.stripe_customer_id = customer_id
                 sub.status = stripe_sub["status"]
                 sub.plan = plan_name
-                sub.current_period_start = _ts_to_dt(
-                    stripe_sub["current_period_start"]
-                )
-                sub.current_period_end = _ts_to_dt(
-                    stripe_sub["current_period_end"]
-                )
+                sub.current_period_start = _ts_to_dt(stripe_sub["current_period_start"])
+                sub.current_period_end = _ts_to_dt(stripe_sub["current_period_end"])
                 sub.cancel_at_period_end = stripe_sub["cancel_at_period_end"]
             else:
                 sub = Subscription(
@@ -175,12 +161,8 @@ async def _handle_checkout_completed(session_data: dict, db: AsyncSession) -> No
                     stripe_customer_id=customer_id,
                     status=stripe_sub["status"],
                     plan=plan_name,
-                    current_period_start=_ts_to_dt(
-                        stripe_sub["current_period_start"]
-                    ),
-                    current_period_end=_ts_to_dt(
-                        stripe_sub["current_period_end"]
-                    ),
+                    current_period_start=_ts_to_dt(stripe_sub["current_period_start"]),
+                    current_period_end=_ts_to_dt(stripe_sub["current_period_end"]),
                     cancel_at_period_end=stripe_sub["cancel_at_period_end"],
                 )
                 db.add(sub)
@@ -223,9 +205,7 @@ async def _handle_invoice_payment_failed(invoice: dict, db: AsyncSession) -> Non
         return
 
     result = await db.execute(
-        select(Subscription).where(
-            Subscription.stripe_subscription_id == subscription_id
-        )
+        select(Subscription).where(Subscription.stripe_subscription_id == subscription_id)
     )
     sub = result.scalar_one_or_none()
     if sub:
@@ -244,9 +224,7 @@ def _ts_to_dt(ts: Optional[int]):
 async def cancel_subscription(user: User, db: AsyncSession) -> bool:
     _ensure_stripe()
 
-    result = await db.execute(
-        select(Subscription).where(Subscription.user_id == user.id)
-    )
+    result = await db.execute(select(Subscription).where(Subscription.user_id == user.id))
     sub = result.scalar_one_or_none()
     if not sub or sub.status not in ("active", "trialing", "past_due"):
         return False

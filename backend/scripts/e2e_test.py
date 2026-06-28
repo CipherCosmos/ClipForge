@@ -9,6 +9,7 @@ Usage:
 
 Requires: pytest-style mocking of all external services.
 """
+
 import json
 import logging
 import sys
@@ -24,11 +25,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import types as _types
 
 for _mod in (
-    "faster_whisper", "faster_whisper.WhisperModel",
-    "whisper", "diarize", "psycopg2",
+    "faster_whisper",
+    "faster_whisper.WhisperModel",
+    "whisper",
+    "diarize",
+    "psycopg2",
 ):
     if _mod not in sys.modules:
         sys.modules[_mod] = _types.ModuleType(_mod)
+
 
 # Mock Celery + DB to prevent connection at import
 # We need a celery_app that passes through the @task decorator unchanged
@@ -39,6 +44,7 @@ class _PassthroughTask:
 
     def task(self, *a, **kw):
         return self
+
 
 _celery_mod = _types.ModuleType("app.workers.celery_app")
 _celery_mod.celery_app = _PassthroughTask()
@@ -77,29 +83,34 @@ def main():
     # ------------------------------------------------------------------
     # Step 1: Transcription
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 1: Transcription Pipeline")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     from app.workers.transcription import run_transcription
 
     mock_segments = [
-        {"start": 0.0, "end": 2.5,
-         "text": "This is an amazing discovery that will change everything."},
-        {"start": 2.5, "end": 5.0,
-         "text": "Scientists have found a way to reverse aging in mice."},
-        {"start": 5.0, "end": 7.5,
-         "text": "The implications for human health are enormous."},
+        {
+            "start": 0.0,
+            "end": 2.5,
+            "text": "This is an amazing discovery that will change everything.",
+        },
+        {"start": 2.5, "end": 5.0, "text": "Scientists have found a way to reverse aging in mice."},
+        {"start": 5.0, "end": 7.5, "text": "The implications for human health are enormous."},
     ]
 
-    with patch("app.workers.transcription.transcribe_audio") as mock_transcribe, \
-            patch("app.workers.transcription.download_file"), \
-            patch("app.workers.transcription.SyncSessionLocal") as mock_session_cls, \
-            patch("app.workers.nlp.run_nlp") as mock_nlp, \
-            patch("app.services.video.download_from_url", return_value=("mock_video.mp4", {"title": "Test"})), \
-            patch("app.services.video.get_video_duration", return_value=12.5), \
-            patch("app.services.storage.upload_file"):
-
+    with (
+        patch("app.workers.transcription.transcribe_audio") as mock_transcribe,
+        patch("app.workers.transcription.download_file"),
+        patch("app.workers.transcription.SyncSessionLocal") as mock_session_cls,
+        patch("app.workers.nlp.run_nlp") as mock_nlp,
+        patch(
+            "app.services.video.download_from_url",
+            return_value=("mock_video.mp4", {"title": "Test"}),
+        ),
+        patch("app.services.video.get_video_duration", return_value=12.5),
+        patch("app.services.storage.upload_file"),
+    ):
         session = MagicMock()
         mock_session_cls.return_value = session
 
@@ -111,9 +122,7 @@ def main():
         video.language = None
         video.status = None
 
-        session.query.return_value.filter.return_value.first.side_effect = [
-            video, None, None
-        ]
+        session.query.return_value.filter.return_value.first.side_effect = [video, None, None]
 
         mock_transcribe.return_value = {
             "segments": mock_segments,
@@ -133,50 +142,61 @@ def main():
     # ------------------------------------------------------------------
     # Step 2: NLP Scoring
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 2: NLP Viral Scoring")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     from app.services.trends import compute_trend_boost
     from app.workers.nlp import run_nlp
 
     segments = [
         {
-            "start": 0.0, "end": 2.5,
+            "start": 0.0,
+            "end": 2.5,
             "text": "This is an amazing discovery that will change everything.",
-            "hook_score": 0.0, "emotion_intensity": 0.0,
-            "engagement_potential": 0.0, "keyword_density": 0.0,
-            "viral_score": 0.0, "scene_change_intensity": 0.0,
-            "audio_energy": 0.0, "trend_boost": 1.0,
+            "hook_score": 0.0,
+            "emotion_intensity": 0.0,
+            "engagement_potential": 0.0,
+            "keyword_density": 0.0,
+            "viral_score": 0.0,
+            "scene_change_intensity": 0.0,
+            "audio_energy": 0.0,
+            "trend_boost": 1.0,
         },
         {
-            "start": 2.5, "end": 5.0,
+            "start": 2.5,
+            "end": 5.0,
             "text": "Scientists have found a way to reverse aging in mice.",
-            "hook_score": 0.0, "emotion_intensity": 0.0,
-            "engagement_potential": 0.0, "keyword_density": 0.0,
-            "viral_score": 0.0, "scene_change_intensity": 0.0,
-            "audio_energy": 0.0, "trend_boost": 1.0,
+            "hook_score": 0.0,
+            "emotion_intensity": 0.0,
+            "engagement_potential": 0.0,
+            "keyword_density": 0.0,
+            "viral_score": 0.0,
+            "scene_change_intensity": 0.0,
+            "audio_energy": 0.0,
+            "trend_boost": 1.0,
         },
     ]
 
-    with patch("app.workers.nlp._call_llm") as mock_llm, \
-            patch("app.workers.nlp.SyncSessionLocal") as mock_session_cls, \
-            patch("app.workers.join_worker.check_and_merge") as mock_merge, \
-            patch("app.workers.scene_detect.run_scene_detect") as mock_sd:
-
+    with (
+        patch("app.workers.nlp._call_llm") as mock_llm,
+        patch("app.workers.nlp.SyncSessionLocal") as mock_session_cls,
+        patch("app.workers.join_worker.check_and_merge"),
+        patch("app.workers.scene_detect.run_scene_detect") as mock_sd,
+    ):
         session = MagicMock()
         mock_session_cls.return_value = session
         video = MagicMock()
         video.id = uuid.UUID(video_id)
         video.segments = segments
 
-        session.query.return_value.filter.return_value.first.side_effect = [
-            video, None
-        ]
+        session.query.return_value.filter.return_value.first.side_effect = [video, None]
 
         mock_llm.return_value = {
-            "hook_score": 0.85, "emotion_intensity": 0.75,
-            "engagement_potential": 0.80, "keyword_density": 0.60,
+            "hook_score": 0.85,
+            "emotion_intensity": 0.75,
+            "engagement_potential": 0.80,
+            "keyword_density": 0.60,
         }
 
         run_nlp(None, video_id)
@@ -194,12 +214,12 @@ def main():
     # ------------------------------------------------------------------
     # Step 3: Scene Detection + Viral Score Recalculation
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 3: Scene Detection & Audio Analysis")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
-    from app.workers.scene_detect import _assign_scene_intensity
     from app.services.scoring import calculate_viral_score as _calculate_viral_score
+    from app.workers.scene_detect import _assign_scene_intensity
 
     test_segments = [
         {"start": 0.0, "end": 5.0, "scene_change_intensity": 0.0},
@@ -210,17 +230,29 @@ def main():
     result = _assign_scene_intensity(test_segments, boundaries)
     test_step("Scene boundaries assigned", lambda: result[0]["scene_change_intensity"] > 0)
 
-    score = _calculate_viral_score({
-        "hook_score": 0.8, "emotion_intensity": 0.7,
-        "engagement_potential": 0.6, "keyword_density": 0.5,
-        "scene_change_intensity": 0.4, "audio_event_score": 0.3,
-        "audio_energy": 0.2, "speaker_confidence": 0.9,
-    })
+    score = _calculate_viral_score(
+        {
+            "hook_score": 0.8,
+            "emotion_intensity": 0.7,
+            "engagement_potential": 0.6,
+            "keyword_density": 0.5,
+            "scene_change_intensity": 0.4,
+            "audio_event_score": 0.3,
+            "audio_energy": 0.2,
+            "speaker_confidence": 0.9,
+        }
+    )
     test_step("Full viral score calculated", lambda: 0 < score < 1)
 
     expected = (
-        0.25 * 0.8 + 0.20 * 0.7 + 0.15 * 0.6 + 0.10 * 0.5 +
-        0.10 * 0.4 + 0.10 * 0.3 + 0.05 * 0.2 + 0.05 * 0.9
+        0.25 * 0.8
+        + 0.20 * 0.7
+        + 0.15 * 0.6
+        + 0.10 * 0.5
+        + 0.10 * 0.4
+        + 0.10 * 0.3
+        + 0.05 * 0.2
+        + 0.05 * 0.9
     )
     test_step(
         f"Score matches formula ({score:.3f} == {expected:.3f})",
@@ -231,9 +263,9 @@ def main():
     # ------------------------------------------------------------------
     # Step 4: Render Selection
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 4: Clip Selection & Rendering")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     from app.workers.render import _generate_clip_metadata, _get_top_segments
 
@@ -253,11 +285,13 @@ def main():
 
     with patch("app.services.llm.generate_llm") as mock_generate:
         mock_generate.return_value = {
-            "response": json.dumps({
-                "title": "Amazing Discovery!",
-                "caption": "Watch this incredible breakthrough! #viral",
-                "hashtags": "#science,#viral,#discovery",
-            })
+            "response": json.dumps(
+                {
+                    "title": "Amazing Discovery!",
+                    "caption": "Watch this incredible breakthrough! #viral",
+                    "hashtags": "#science,#viral,#discovery",
+                }
+            )
         }
 
         meta = _generate_clip_metadata("Amazing discovery in science")
@@ -267,9 +301,9 @@ def main():
     # ------------------------------------------------------------------
     # Step 5: Content Moderation
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 5: Content Moderation")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     from app.services.moderation import moderate_text
 
@@ -291,9 +325,9 @@ def main():
     # ------------------------------------------------------------------
     # Step 6: Audio Ducking
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("Step 6: Audio Ducking")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     from app.services.ducking import build_duck_filter
 
@@ -308,12 +342,14 @@ def main():
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info("E2E Pipeline Test Complete!")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info("\nPipeline chain validated:")
-    logger.info("  Upload/URL \u2192 Transcribe \u2192 NLP Score"
-                 " \u2192 Scene Detect \u2192 Render \u2192 Export")
+    logger.info(
+        "  Upload/URL \u2192 Transcribe \u2192 NLP Score"
+        " \u2192 Scene Detect \u2192 Render \u2192 Export"
+    )
     logger.info("\nEnhancements active:")
     logger.info("  \u2705 GPU/CPU auto-detection")
     logger.info("  \u2705 Hook text overlays")

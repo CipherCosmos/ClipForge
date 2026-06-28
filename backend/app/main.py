@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 
+from app.api.accounts import router as accounts_router
 from app.api.auth import router as auth_router
 from app.api.billing import router as billing_router
 from app.api.branding import router as branding_router
@@ -16,16 +17,15 @@ from app.api.clips import router as clips_router
 from app.api.exports import router as exports_router
 from app.api.jobs import router as jobs_router
 from app.api.keys import router as keys_router
-from app.api.accounts import router as accounts_router
 from app.api.publish import router as publish_router
-from app.api.schedule import router as schedule_router
 from app.api.research import router as research_router
+from app.api.schedule import router as schedule_router
 from app.api.settings import router as settings_router
 from app.api.transcript import router as transcript_router
 from app.api.videos import router as videos_router
 from app.api.ws import router as ws_router
 from app.config import settings
-from app.core.exceptions import AppException
+from app.core.exceptions import AppError
 from app.core.middleware import RequestIDMiddleware
 from app.core.ratelimit import limiter
 from app.database import engine
@@ -73,8 +73,8 @@ app.add_middleware(
 Instrumentator().instrument(app).expose(app)
 
 
-@app.exception_handler(AppException)
-async def app_exception_handler(request: Request, exc: AppException):
+@app.exception_handler(AppError)
+async def app_exception_handler(request: Request, exc: AppError):
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -91,7 +91,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     request_id = getattr(request.state, "request_id", None)
     logger.error(
         "Unhandled exception request_id=%s path=%s method=%s: %s",
-        request_id, request.url.path, request.method, exc,
+        request_id,
+        request.url.path,
+        request.method,
+        exc,
         exc_info=True,
     )
     return JSONResponse(
@@ -128,6 +131,7 @@ async def health():
     from sqlalchemy import text
 
     from app.database import async_session
+
     status = {"status": "ok", "checks": {}}
 
     # DB check

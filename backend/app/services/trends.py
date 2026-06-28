@@ -1,6 +1,7 @@
 """Trend-aware scoring - boosts viral scores for trending topics.
 Free/open-source Trend-Pulse API with zero auth required.
 """
+
 import logging
 import re
 import time
@@ -13,22 +14,68 @@ logger = logging.getLogger(__name__)
 TREND_API_URL = "https://api.trend-pulse.com/v1/trending/keywords"
 
 FALLBACK_TRENDS = [
-    "AI", "artificial intelligence", "machine learning", "chatgpt", "openai",
-    "crypto", "bitcoin", "blockchain", "nft",
-    "health", "fitness", "workout", "diet", "mental health",
-    "money", "investing", "stocks", "real estate",
-    "tech", "startup", "entrepreneur", "coding", "programming",
-    "productivity", "focus", "habits",
-    "relationship", "dating", "psychology",
-    "travel", "food", "recipe", "cooking",
-    "gaming", "streaming", "youtube", "tiktok",
-    "sports", "football", "soccer", "basketball",
-    "motivation", "inspiration", "success",
-    " कृत्रिम बुद्धिमत्ता", "एआई", "टेक्नोलॉजी",
-    "मोटिवेशन", "सफलता", "पैसा", "हेल्थ",
-    "फिटनेस", "वर्कआउट", "खाना", "रिलेशनशिप",
-    "बिजनेस", "स्टार्टअप", "इन्वेस्टमेंट",
-    "एजुकेशन", "करियर", "जॉब", "स्किल्स",
+    "AI",
+    "artificial intelligence",
+    "machine learning",
+    "chatgpt",
+    "openai",
+    "crypto",
+    "bitcoin",
+    "blockchain",
+    "nft",
+    "health",
+    "fitness",
+    "workout",
+    "diet",
+    "mental health",
+    "money",
+    "investing",
+    "stocks",
+    "real estate",
+    "tech",
+    "startup",
+    "entrepreneur",
+    "coding",
+    "programming",
+    "productivity",
+    "focus",
+    "habits",
+    "relationship",
+    "dating",
+    "psychology",
+    "travel",
+    "food",
+    "recipe",
+    "cooking",
+    "gaming",
+    "streaming",
+    "youtube",
+    "tiktok",
+    "sports",
+    "football",
+    "soccer",
+    "basketball",
+    "motivation",
+    "inspiration",
+    "success",
+    " कृत्रिम बुद्धिमत्ता",
+    "एआई",
+    "टेक्नोलॉजी",
+    "मोटिवेशन",
+    "सफलता",
+    "पैसा",
+    "हेल्थ",
+    "फिटनेस",
+    "वर्कआउट",
+    "खाना",
+    "रिलेशनशिप",
+    "बिजनेस",
+    "स्टार्टअप",
+    "इन्वेस्टमेंट",
+    "एजुकेशन",
+    "करियर",
+    "जॉब",
+    "स्किल्स",
 ]
 
 _cache: dict = {"keywords": [], "timestamp": 0.0}
@@ -70,8 +117,7 @@ def compute_trend_boost(segment_text: str, trending: Optional[list[str]] = None)
 
     text_lower = segment_text.lower()
     matches = sum(
-        1 for kw in trending
-        if re.search(r'\b' + re.escape(kw.lower()) + r'\b', text_lower)
+        1 for kw in trending if re.search(r"\b" + re.escape(kw.lower()) + r"\b", text_lower)
     )
 
     if matches == 0:

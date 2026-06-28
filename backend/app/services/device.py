@@ -21,6 +21,7 @@ def get_optimal_device() -> str:
     """
     try:
         import torch
+
         if torch.cuda.is_available():
             logger.info("CUDA detected: %s", torch.cuda.get_device_name(0))
             return "cuda"
@@ -67,6 +68,7 @@ def get_cuda_device_count() -> int:
     """Number of CUDA devices available (0 if none)."""
     try:
         import torch
+
         return torch.cuda.device_count()
     except Exception:
         return 0
@@ -76,9 +78,10 @@ def get_cuda_vram_gb() -> float:
     """Total VRAM in GB on the primary CUDA device (0 if none)."""
     try:
         import torch
+
         if not torch.cuda.is_available():
             return 0.0
-        return torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        return torch.cuda.get_device_properties(0).total_memory / (1024**3)
     except Exception:
         return 0.0
 
@@ -89,6 +92,7 @@ def get_platform_label() -> str:
     if device == "cuda":
         try:
             import torch
+
             name = torch.cuda.get_device_name(0)
             vram = get_cuda_vram_gb()
             return f"CUDA ({name}, {vram:.0f}GB VRAM)"

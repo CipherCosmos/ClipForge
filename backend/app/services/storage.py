@@ -92,9 +92,7 @@ def upload_file(file_path: str, object_name: str) -> str:
             headers={"Content-Type": content_type},
         )
         if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to upload to Supabase: {resp.status_code} - {resp.text}"
-            )
+            raise RuntimeError(f"Failed to upload to Supabase: {resp.status_code} - {resp.text}")
         return object_name
     else:
         client = get_client()
@@ -148,6 +146,7 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
             if resp.status_code == 200:
                 data = resp.json()
                 from urllib.parse import urlparse
+
                 parsed = urlparse(settings.SUPABASE_STORAGE_URL)
                 url = f"{parsed.scheme}://{parsed.netloc}{data['signedURL']}"
                 _presigned_cache[object_name] = url
@@ -170,9 +169,7 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
 def get_presigned_upload_url(object_name: str, expires: int = 3600) -> str:
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
-        resp = _supabase_request(
-            "POST", f"object/upload/sign/{bucket}/{object_name}"
-        )
+        resp = _supabase_request("POST", f"object/upload/sign/{bucket}/{object_name}")
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to get upload URL: {resp.text}")
         data = resp.json()
@@ -202,9 +199,7 @@ def delete_file(object_name: str) -> None:
 def list_files(prefix: str) -> List[str]:
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
-        resp = _supabase_request(
-            "POST", f"object/list/{bucket}", json={"prefix": prefix}
-        )
+        resp = _supabase_request("POST", f"object/list/{bucket}", json={"prefix": prefix})
         if resp.status_code == 200:
             return [f"{prefix}{item['name']}" for item in resp.json()]
         return []
@@ -222,15 +217,11 @@ def delete_prefix(prefix: str) -> None:
         bucket = settings.MINIO_BUCKET
         files = list_files(prefix)
         if files:
-            _supabase_request(
-                "DELETE", f"object/{bucket}", json={"prefixes": files}
-            )
+            _supabase_request("DELETE", f"object/{bucket}", json={"prefixes": files})
     else:
         client = get_client()
         try:
-            objects = client.list_objects(
-                settings.MINIO_BUCKET, prefix=prefix, recursive=True
-            )
+            objects = client.list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True)
             for obj in objects:
                 client.remove_object(settings.MINIO_BUCKET, obj.object_name)
         except S3Error:
@@ -276,6 +267,7 @@ def copy_file(src_object_name: str, dest_object_name: str) -> None:
     else:
         client = get_client()
         from minio.common import CopySource
+
         bucket = settings.MINIO_BUCKET
         try:
             client.copy_object(
@@ -297,7 +289,6 @@ def copy_prefix(src_prefix: str, dest_prefix: str) -> None:
     files = list_files(src_prefix)
     for src_file in files:
         if src_file.startswith(src_prefix):
-            relative_path = src_file[len(src_prefix):]
+            relative_path = src_file[len(src_prefix) :]
             dest_file = f"{dest_prefix}{relative_path}"
             copy_file(src_file, dest_file)
-

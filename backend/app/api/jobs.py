@@ -28,9 +28,7 @@ async def list_jobs(
     if not video_result.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
 
-    count_result = await db.execute(
-        select(func.count(Job.id)).where(Job.video_id == video_id)
-    )
+    count_result = await db.execute(select(func.count(Job.id)).where(Job.video_id == video_id))
     total = count_result.scalar()
 
     result = await db.execute(
@@ -54,9 +52,7 @@ async def get_job(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Job).where(Job.id == job_id)
-    )
+    result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -77,10 +73,7 @@ async def retry_job(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Job).join(Video).where(
-            Job.id == job_id,
-            Video.user_id == current_user.id
-        )
+        select(Job).join(Video).where(Job.id == job_id, Video.user_id == current_user.id)
     )
     job = result.scalar_one_or_none()
     if not job:

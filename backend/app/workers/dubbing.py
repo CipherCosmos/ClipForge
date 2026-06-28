@@ -2,6 +2,7 @@
 
 Pipeline: extract audio → translate transcript → TTS → replace audio → upload.
 """
+
 import logging
 import os
 import shutil
@@ -14,8 +15,8 @@ import httpx
 from app.models import Clip, Video
 from app.services.storage import ensure_bucket, get_presigned_url, upload_file
 from app.services.translation import SUPPORTED_LANGUAGES, translate_text
-from app.services.video import get_media_duration
 from app.services.tts import generate_speech
+from app.services.video import get_media_duration
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
@@ -72,19 +73,28 @@ def dub_clip(
         # Build audio filter: tempo + normalize volume + pad with silence to match video length
         audio_filter = f"atempo={tempo:.2f},loudnorm=I=-16:LRA=11:TP=-1.5,apad"
 
-        # Step 6: Replace audio in video (use -t to enforce original duration and prevent truncation)
+        # Step 6: Replace audio in video (use -t to enforce original duration, prevent truncation)
         cmd = [
-            "ffmpeg", "-y",
-            "-i", input_video,
-            "-i", speech_path,
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_video,
+            "-i",
+            speech_path,
             "-filter_complex",
             f"[1:a]{audio_filter}[dubbed]",
-            "-map", "0:v",
-            "-map", "[dubbed]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-t", f"{original_duration:.2f}",
+            "-map",
+            "0:v",
+            "-map",
+            "[dubbed]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{original_duration:.2f}",
             output_video,
         ]
 
@@ -101,7 +111,9 @@ def dub_clip(
 
         logger.info(
             "Dubbed clip created: %s (lang=%s, tempo=%.2f)",
-            output_video, target_lang, tempo,
+            output_video,
+            target_lang,
+            tempo,
         )
         return True
 
@@ -153,9 +165,7 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
             with open(input_path, "wb") as f:
                 f.write(resp.content)
 
-        success = dub_clip(
-            input_path, output_path, transcript, source_lang, target_lang
-        )
+        success = dub_clip(input_path, output_path, transcript, source_lang, target_lang)
         if not success:
             logger.warning("Dubbing failed for clip %s", clip_id)
             return
@@ -168,16 +178,23 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
 
         logger.info(
             "Dubbed clip uploaded: %s (lang=%s, url=%s)",
-            clip_id, target_lang, dubbed_url,
+            clip_id,
+            target_lang,
+            dubbed_url,
         )
 
         from app.services.webhooks import fire_event_sync
-        fire_event_sync(str(clip.video_id), "dub.completed", {
-            "status": "completed",
-            "clip_id": clip_id,
-            "target_language": target_lang,
-            "dubbed_url": dubbed_url,
-        })
+
+        fire_event_sync(
+            str(clip.video_id),
+            "dub.completed",
+            {
+                "status": "completed",
+                "clip_id": clip_id,
+                "target_language": target_lang,
+                "dubbed_url": dubbed_url,
+            },
+        )
 
         return {
             "clip_id": clip_id,
@@ -230,7 +247,9 @@ def run_dub_video(self, video_id: str, target_langs: list[str] | None = None):
 
         logger.info(
             "Enqueued dubbing for video %s: %d clips x %d languages",
-            video_id, len(clips), len(target_langs),
+            video_id,
+            len(clips),
+            len(target_langs),
         )
 
     except Exception as exc:

@@ -1,4 +1,5 @@
 """Video export endpoints."""
+
 import logging
 import os
 import tempfile
@@ -20,6 +21,7 @@ from app.services.storage import download_file
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/videos", tags=["exports"])
 
+
 @router.get("/{video_id}/export")
 async def export_video(
     video_id: uuid.UUID,
@@ -33,9 +35,7 @@ async def export_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    clips_result = await db.execute(
-        select(Clip).where(Clip.video_id == video_id)
-    )
+    clips_result = await db.execute(select(Clip).where(Clip.video_id == video_id))
     clips = clips_result.scalars().all()
 
     if not clips:
@@ -56,17 +56,25 @@ async def export_video(
                 os.unlink(clip_tmp)
             except Exception as e:
                 logger.warning("Failed to add clip %s: %s", clip.id, e)
-                try: os.unlink(clip_tmp)
-                except: pass
+                try:
+                    os.unlink(clip_tmp)
+                except Exception:
+                    pass
 
         import json
-        metadata = [{
-            "id": str(c.id), "start_time": c.start_time,
-            "end_time": c.end_time, "title": c.title,
-            "caption": c.caption, "score": c.score,
-            "hashtags": c.hashtags,
-        } for c in clips]
+
+        metadata = [
+            {
+                "id": str(c.id),
+                "start_time": c.start_time,
+                "end_time": c.end_time,
+                "title": c.title,
+                "caption": c.caption,
+                "score": c.score,
+                "hashtags": c.hashtags,
+            }
+            for c in clips
+        ]
         zf.writestr("metadata.json", json.dumps(metadata, indent=2))
 
-    return FileResponse(zip_path, media_type="application/zip",
-                        filename=f"{safe_name}_clips.zip")
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{safe_name}_clips.zip")

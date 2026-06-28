@@ -1,10 +1,12 @@
 """Social media publishing endpoints."""
+
 import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func as sa_func
+from sqlalchemy import func as sa_func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import decrypt_token
@@ -68,7 +70,8 @@ def _resolve_dub_url(clip, dub_language: str | None) -> str | None:
             else:
                 logger.warning(
                     "Dubbed file not found for lang=%s clip=%s, falling back to original",
-                    dub_language, clip.id,
+                    dub_language,
+                    clip.id,
                 )
         except Exception as e:
             logger.warning("Failed to resolve dubbed URL: %s", e)
@@ -108,7 +111,7 @@ async def publish_clip_endpoint(
             select(PlatformAccount).where(
                 PlatformAccount.id == uuid.UUID(req.platform_account_id),
                 PlatformAccount.user_id == current_user.id,
-                PlatformAccount.is_active == True,
+                PlatformAccount.is_active,
             )
         )
         account = acc_result.scalar_one_or_none()
@@ -139,7 +142,9 @@ async def publish_clip_endpoint(
         platform_account_id=account_id,
         platform=req.platform,
         status="pending",
-        dub_language=req.dub_language if req.dub_language and req.dub_language != "original" else None,
+        dub_language=req.dub_language
+        if req.dub_language and req.dub_language != "original"
+        else None,
         title=req.title or clip.title or "",
         description=req.description or clip.caption or "",
         hashtags=req.hashtags or clip.hashtags or "",
@@ -171,11 +176,16 @@ async def publish_clip_endpoint(
         await db.commit()
 
         if result_obj.get("success"):
-            await fire_event_async(db, str(clip.video_id), "clip.published", {
-                "clip_id": str(clip.id),
-                "platform": req.platform,
-                "url": result_obj.get("platform_url", ""),
-            })
+            await fire_event_async(
+                db,
+                str(clip.video_id),
+                "clip.published",
+                {
+                    "clip_id": str(clip.id),
+                    "platform": req.platform,
+                    "url": result_obj.get("platform_url", ""),
+                },
+            )
 
         return {
             **result_obj,
@@ -217,7 +227,9 @@ async def publish_history(
     logs = result.scalars().all()
 
     # Count total
-    count_q = select(sa_func.count()).select_from(PublishLog).where(PublishLog.user_id == current_user.id)
+    count_q = (
+        select(sa_func.count()).select_from(PublishLog).where(PublishLog.user_id == current_user.id)
+    )
     if clip_id:
         count_q = count_q.where(PublishLog.clip_id == uuid.UUID(clip_id))
     if platform:
@@ -250,6 +262,7 @@ async def publish_history(
 
 # --- Webhooks (unchanged) ---
 
+
 @router.get("/webhook/{video_id}")
 async def list_webhooks_endpoint(
     video_id: str,
@@ -258,9 +271,16 @@ async def list_webhooks_endpoint(
 ):
     hooks = await get_webhooks_for_video(db, video_id)
     return [
-        {"id": str(h.id), "url": h.url, "events": h.events, "is_active": h.is_active, "created_at": h.created_at.isoformat() if h.created_at else None}
+        {
+            "id": str(h.id),
+            "url": h.url,
+            "events": h.events,
+            "is_active": h.is_active,
+            "created_at": h.created_at.isoformat() if h.created_at else None,
+        }
         for h in hooks
     ]
+
 
 @router.post("/webhook")
 async def register_webhook_endpoint(
@@ -273,6 +293,7 @@ async def register_webhook_endpoint(
         return {"success": True}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
 
 @router.delete("/webhook/{video_id}")
 async def unregister_webhook_endpoint(

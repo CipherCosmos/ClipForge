@@ -1,12 +1,12 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-import json
-from unittest.mock import patch, MagicMock
-from app.services.llm import generate_llm, generate_llm_async
+
 from app.config import settings
+from app.services.llm import generate_llm, generate_llm_async
 
 
 class TestLLMService:
-
     @pytest.fixture(autouse=True)
     def clean_settings(self):
         old_key = settings.GROQ_API_KEY
@@ -41,15 +41,7 @@ class TestLLMService:
         mock_get_http.return_value = mock_client
 
         # Mock Groq chat completions response format
-        groq_json = {
-            "choices": [
-                {
-                    "message": {
-                        "content": "Groq response text"
-                    }
-                }
-            ]
-        }
+        groq_json = {"choices": [{"message": {"content": "Groq response text"}}]}
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
@@ -59,7 +51,7 @@ class TestLLMService:
         res = generate_llm("test prompt", format_json=True)
         assert res["response"] == "Groq response text"
         assert mock_client.post.call_count == 1
-        
+
         # Check that it called Groq endpoint with auth headers
         call_url = mock_client.post.call_args[0][0]
         call_headers = mock_client.post.call_args[1]["headers"]
@@ -91,15 +83,7 @@ class TestLLMService:
         mock_client = MagicMock()
         mock_get_http.return_value = mock_client
 
-        groq_json = {
-            "choices": [
-                {
-                    "message": {
-                        "content": "Groq async text"
-                    }
-                }
-            ]
-        }
+        groq_json = {"choices": [{"message": {"content": "Groq async text"}}]}
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()

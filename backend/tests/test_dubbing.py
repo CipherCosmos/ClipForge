@@ -1,8 +1,10 @@
 """Tests for the AI voice dubbing pipeline."""
+
 import sys
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -13,12 +15,15 @@ class TestTranslation:
 
     @pytest.fixture(autouse=True)
     def mock_llm_translation(self):
-        with patch("app.services.translation._translate_via_llm", return_value=None), \
-             patch("httpx.get", side_effect=Exception("Mocked out during tests")):
+        with (
+            patch("app.services.translation._translate_via_llm", return_value=None),
+            patch("httpx.get", side_effect=Exception("Mocked out during tests")),
+        ):
             yield
 
     def test_supported_languages_defined(self):
         from app.services.translation import SUPPORTED_LANGUAGES
+
         assert len(SUPPORTED_LANGUAGES) >= 20
         assert "en" in SUPPORTED_LANGUAGES
         assert "es" in SUPPORTED_LANGUAGES
@@ -26,11 +31,13 @@ class TestTranslation:
 
     def test_same_language_returns_original(self):
         from app.services.translation import translate_text
+
         result = translate_text("Hello world", target_lang="en", source_lang="en")
         assert result == "Hello world"
 
     def test_unsupported_language_returns_original(self):
         from app.services.translation import translate_text
+
         result = translate_text("Hello world", target_lang="xx", source_lang="en")
         assert result == "Hello world"
 
@@ -117,18 +124,17 @@ class TestDubbingPipeline:
         mock_http_client.__enter__.return_value = mock_http_client
         mock_http_client.get.return_value = mock_response
 
-        with patch("app.workers.dubbing.SyncSessionLocal") as mock_session_cls, \
-             patch("app.workers.dubbing.dub_clip") as mock_dub, \
-             patch("app.workers.dubbing.httpx.Client", return_value=mock_http_client), \
-             patch("app.workers.dubbing.upload_file") as mock_upload, \
-             patch("app.workers.dubbing.get_presigned_url") as mock_presign, \
-             patch("app.workers.dubbing.ensure_bucket"):
-
+        with (
+            patch("app.workers.dubbing.SyncSessionLocal") as mock_session_cls,
+            patch("app.workers.dubbing.dub_clip") as mock_dub,
+            patch("app.workers.dubbing.httpx.Client", return_value=mock_http_client),
+            patch("app.workers.dubbing.upload_file"),
+            patch("app.workers.dubbing.get_presigned_url") as mock_presign,
+            patch("app.workers.dubbing.ensure_bucket"),
+        ):
             session = MagicMock()
             mock_session_cls.return_value = session
-            session.query.return_value.filter.return_value.first.side_effect = [
-                clip, video
-            ]
+            session.query.return_value.filter.return_value.first.side_effect = [clip, video]
 
             mock_dub.return_value = True
             mock_presign.return_value = "http://minio/dubbed.mp4"
@@ -151,9 +157,10 @@ class TestDubbingPipeline:
             MagicMock(id=uuid.uuid4(), video_id=video_id),
         ]
 
-        with patch("app.workers.dubbing.SyncSessionLocal") as mock_session_cls, \
-             patch("app.workers.dubbing.run_dub_clip") as mock_dub_clip:
-
+        with (
+            patch("app.workers.dubbing.SyncSessionLocal") as mock_session_cls,
+            patch("app.workers.dubbing.run_dub_clip") as mock_dub_clip,
+        ):
             session = MagicMock()
             mock_session_cls.return_value = session
 
@@ -170,11 +177,12 @@ class TestDubbingPipeline:
         """Test the core dub_clip function logic with mocked subprocess."""
         from app.workers.dubbing import dub_clip
 
-        with patch("app.workers.dubbing.translate_text") as mock_translate, \
-             patch("app.workers.dubbing.generate_speech") as mock_speech, \
-             patch("app.workers.dubbing.subprocess.run") as mock_run, \
-             patch("os.path.exists", return_value=True):
-
+        with (
+            patch("app.workers.dubbing.translate_text") as mock_translate,
+            patch("app.workers.dubbing.generate_speech") as mock_speech,
+            patch("app.workers.dubbing.subprocess.run") as mock_run,
+            patch("os.path.exists", return_value=True),
+        ):
             mock_translate.return_value = "Hola mundo"
             mock_speech.return_value = "/tmp/speech.mp3"
 
@@ -185,8 +193,11 @@ class TestDubbingPipeline:
             ]
 
             result = dub_clip(
-                "/tmp/input.mp4", "/tmp/output.mp4",
-                "Hello world", "en", "es",
+                "/tmp/input.mp4",
+                "/tmp/output.mp4",
+                "Hello world",
+                "en",
+                "es",
             )
 
             assert result is True
@@ -208,9 +219,7 @@ class TestDubbingPipeline:
             video = MagicMock()
             video.language = "en"
 
-            session.query.return_value.filter.return_value.first.side_effect = [
-                clip, video
-            ]
+            session.query.return_value.filter.return_value.first.side_effect = [clip, video]
 
             result = run_dub_clip(str(clip.id), "es")
             assert result is None
@@ -223,8 +232,11 @@ class TestDubbingPipeline:
             mock_translate.return_value = "Hello world"  # same as input
 
             result = dub_clip(
-                "/tmp/input.mp4", "/tmp/output.mp4",
-                "Hello world", "en", "es",
+                "/tmp/input.mp4",
+                "/tmp/output.mp4",
+                "Hello world",
+                "en",
+                "es",
             )
 
             assert result is False
@@ -248,6 +260,7 @@ class TestDubbingEndToEnd:
 
     def test_supported_languages_listed_in_dubbing(self):
         from app.workers.dubbing import SUPPORTED_LANGUAGES
+
         assert len(SUPPORTED_LANGUAGES) >= 20
         assert "es" in SUPPORTED_LANGUAGES
         assert "fr" in SUPPORTED_LANGUAGES

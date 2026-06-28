@@ -80,6 +80,7 @@ async def get_current_user(
 
     # Fallback: try API key authentication
     from app.core.api_keys import authenticate_api_key
+
     user = await authenticate_api_key(token)
     if user:
         return user
@@ -127,4 +128,3 @@ async def revoke_refresh_token(token: str, db: AsyncSession) -> None:
     if token_record:
         token_record.revoked = True
         await db.commit()
-

@@ -4,13 +4,15 @@ MinIO to Supabase Storage migration script.
 - Small files (<10MB) are batched with 5 parallel workers
 - Large files (>=10MB) are uploaded sequentially to avoid timeout issues
 """
+
 import os
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import httpx
 from dotenv import load_dotenv
 from minio import Minio
-import httpx
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
@@ -29,6 +31,7 @@ AUTH_HEADERS = {
 def upload_object(local_client, obj_name, size):
     try:
         import mimetypes
+
         content_type, _ = mimetypes.guess_type(obj_name)
         if not content_type:
             content_type = "application/octet-stream"
@@ -77,8 +80,9 @@ def main():
     with httpx.Client(headers=AUTH_HEADERS, timeout=30) as client:
         r = client.get(f"{SUPABASE_URL}/bucket/{BUCKET}")
         if r.status_code in (404, 400):
-            client.post(f"{SUPABASE_URL}/bucket",
-                        json={"id": BUCKET, "name": BUCKET, "public": True})
+            client.post(
+                f"{SUPABASE_URL}/bucket", json={"id": BUCKET, "name": BUCKET, "public": True}
+            )
             print(f"Created remote bucket: {BUCKET}\n")
         else:
             print(f"Remote bucket '{BUCKET}' already exists.\n")
@@ -95,8 +99,7 @@ def main():
     # --- Small files: 5 parallel workers ---
     print("--- Uploading small files in parallel (5 workers) ---")
     with ThreadPoolExecutor(max_workers=5) as pool:
-        futs = {pool.submit(upload_object, local_client, name, size): name
-                for name, size in small}
+        futs = {pool.submit(upload_object, local_client, name, size): name for name, size in small}
         for fut in as_completed(futs):
             if fut.result():
                 success += 1
@@ -106,7 +109,7 @@ def main():
     # --- Large files: sequential ---
     print(f"\n--- Uploading large files sequentially ({len(large)} files) ---")
     for name, size in large:
-        print(f"Uploading {name} ({size // (1024*1024)}MB)...")
+        print(f"Uploading {name} ({size // (1024 * 1024)}MB)...")
         if upload_object(local_client, name, size):
             success += 1
         else:

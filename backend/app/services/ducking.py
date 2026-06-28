@@ -1,6 +1,7 @@
 """Audio ducking — reduce background music volume during speech.
 Uses FFmpeg volume detection + sensevoice music detection.
 """
+
 import logging
 
 from app.services.video import get_media_duration

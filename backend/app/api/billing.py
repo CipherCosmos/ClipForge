@@ -77,7 +77,10 @@ async def get_plans():
             id=settings.STRIPE_PRO_PRICE_ID,
             name="Pro Monthly",
             price=settings.STRIPE_PRO_MONTHLY_PRICE,
-            price_display=f"${settings.STRIPE_PRO_MONTHLY_PRICE // 100}.{settings.STRIPE_PRO_MONTHLY_PRICE % 100:02d}/mo",
+            price_display=(
+                f"${settings.STRIPE_PRO_MONTHLY_PRICE // 100}."
+                f"{settings.STRIPE_PRO_MONTHLY_PRICE % 100:02d}/mo"
+            ),
             features=[
                 f"{PRO_LIMITS['max_videos']} videos",
                 f"Up to {PRO_LIMITS['max_resolution']}",
@@ -89,7 +92,10 @@ async def get_plans():
             id="price_yearly_pro",
             name="Pro Yearly",
             price=settings.STRIPE_PRO_YEARLY_PRICE,
-            price_display=f"${settings.STRIPE_PRO_YEARLY_PRICE // 100}.{settings.STRIPE_PRO_YEARLY_PRICE % 100:02d}/yr",
+            price_display=(
+                f"${settings.STRIPE_PRO_YEARLY_PRICE // 100}."
+                f"{settings.STRIPE_PRO_YEARLY_PRICE % 100:02d}/yr"
+            ),
             features=[
                 f"{PRO_LIMITS['max_videos']} videos",
                 f"Up to {PRO_LIMITS['max_resolution']}",
@@ -170,9 +176,7 @@ async def get_subscription(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Subscription).where(Subscription.user_id == current_user.id)
-    )
+    result = await db.execute(select(Subscription).where(Subscription.user_id == current_user.id))
     sub = result.scalar_one_or_none()
 
     if not sub or sub.status in ("canceled", "incomplete_expired"):
@@ -188,9 +192,7 @@ async def get_subscription(
         active=sub.status == "active" or sub.status == "trialing",
         plan=sub.plan,
         status=sub.status,
-        current_period_end=(
-            sub.current_period_end.isoformat() if sub.current_period_end else None
-        ),
+        current_period_end=(sub.current_period_end.isoformat() if sub.current_period_end else None),
         cancel_at_period_end=sub.cancel_at_period_end,
     )
 
@@ -203,9 +205,7 @@ async def cancel_subscription(
     if not billing_service.is_stripe_configured():
         raise HTTPException(status_code=501, detail="Billing is not configured")
 
-    result = await db.execute(
-        select(Subscription).where(Subscription.user_id == current_user.id)
-    )
+    result = await db.execute(select(Subscription).where(Subscription.user_id == current_user.id))
     sub = result.scalar_one_or_none()
     if not sub or sub.status not in ("active", "trialing", "past_due"):
         raise HTTPException(status_code=404, detail="No active subscription found")

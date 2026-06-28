@@ -48,9 +48,7 @@ def _generate_speech_edge_tts(text: str, voice: str, output_path: str) -> bool:
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning(
-                "edge-tts failed (rc=%d): %s", result.returncode, result.stderr[:200]
-            )
+            logger.warning("edge-tts failed (rc=%d): %s", result.returncode, result.stderr[:200])
             return False
         if not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
             logger.warning("edge-tts produced empty output: %s", output_path)
@@ -83,13 +81,20 @@ def _generate_fallback_audio(output_path: str, duration: float = 3.0) -> bool:
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-f", "lavfi", "-i",
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
                 f"aevalsrc=sin(500*t)*0.6+sin(1500*t)*0.3+sin(2500*t)*0.1:s=44100:d={duration}",
-                "-af", "volume=0.3,afftdn=nf=-25,lowpass=f=3000",
-                "-ar", "22050",
-                "-ac", "1",
-                "-b:a", "64k",
+                "-af",
+                "volume=0.3,afftdn=nf=-25,lowpass=f=3000",
+                "-ar",
+                "22050",
+                "-ac",
+                "1",
+                "-b:a",
+                "64k",
                 output_path,
             ],
             capture_output=True,

@@ -1,6 +1,9 @@
 """Tests for branding service."""
+
 from unittest.mock import patch
+
 import pytest
+
 from app.services.branding import BrandConfig, build_caption_style_filter, build_watermark_filter
 
 
