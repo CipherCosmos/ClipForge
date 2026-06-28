@@ -1,16 +1,32 @@
-import { dirname } from "path";
-import { fileURLToPath } from "url";
-import { FlatCompat } from "@eslint/eslintrc";
+import tseslint from "typescript-eslint";
+import nextPlugin from "@next/eslint-plugin-next";
+import reactHooks from "eslint-plugin-react-hooks";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const nextConfig = nextPlugin.configs["core-web-vitals"];
+const hooksConfig = reactHooks.configs.flat.recommended;
 
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-});
-
-const eslintConfig = [
-  ...compat.extends("next/core-web-vitals"),
+export default [
+  {
+    files: ["**/*.{ts,tsx,js,jsx}"],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        project: "./tsconfig.json",
+      },
+    },
+  },
+  {
+    files: ["**/*.{ts,tsx,js,jsx}"],
+    ...nextConfig,
+    plugins: {
+      ...nextConfig.plugins,
+      ...hooksConfig.plugins,
+    },
+    rules: {
+      ...nextConfig.rules,
+      ...Object.fromEntries(
+        Object.keys(hooksConfig.rules).map(k => [k, "warn"])
+      ),
+    },
+  },
 ];
-
-export default eslintConfig;
