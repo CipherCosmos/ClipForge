@@ -1,10 +1,11 @@
 """Content moderation gate — NSFW/profanity/violence detection.
 Free/open-source: HuggingFace transformers + Ollama text moderation.
 """
+
 import logging
 import os
-import threading
 import tempfile
+import threading
 from typing import Any
 
 import cv2
@@ -27,7 +28,9 @@ def _get_nsfw_classifier():
             return _nsfw_classifier
         try:
             from transformers import pipeline
+
             from app.services.device import get_optimal_device
+
             nsfw_device = get_optimal_device()
             if nsfw_device == "mps":
                 nsfw_device_str = "mps"
@@ -99,15 +102,37 @@ def moderate_text(text: str) -> dict[str, Any]:
     text_lower = text.lower()
 
     profanity_keywords = [
-        "fuck", "shit", "ass", "bitch", "damn", "crap", "dick", "piss",
-        "slut", "whore", "bastard", "douche",
+        "fuck",
+        "shit",
+        "ass",
+        "bitch",
+        "damn",
+        "crap",
+        "dick",
+        "piss",
+        "slut",
+        "whore",
+        "bastard",
+        "douche",
     ]
     violence_keywords = [
-        "kill", "murder", "death", "die", "shoot", "stab", "attack",
-        "bomb", "terror", "weapon", "gun",
+        "kill",
+        "murder",
+        "death",
+        "die",
+        "shoot",
+        "stab",
+        "attack",
+        "bomb",
+        "terror",
+        "weapon",
+        "gun",
     ]
     hate_keywords = [
-        "nazi", "racist", "white suprem", "kkk",
+        "nazi",
+        "racist",
+        "white suprem",
+        "kkk",
     ]
 
     flagged_categories = []

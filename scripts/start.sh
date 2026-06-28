@@ -152,11 +152,11 @@ if [ -n "$GROQ_API_KEY" ]; then
   ok "Using Groq Cloud API — skipping Ollama model checks"
 else
   MODEL="${OLLAMA_MODEL:-llama3.2}"
-  if docker compose exec -T ollama ollama list 2>/dev/null | grep -q "$MODEL"; then
+  if ollama list 2>/dev/null | grep -q "$MODEL"; then
     ok "Ollama model '$MODEL' already pulled"
   else
     echo "  Pulling '$MODEL' (first pull downloads ~2GB, may take a while)..."
-    docker compose exec -T ollama ollama pull "$MODEL" 2>&1 | tail -1
+    ollama pull "$MODEL" 2>&1 | tail -1
     ok "Ollama model '$MODEL' ready"
   fi
 fi
@@ -287,8 +287,15 @@ fi
 echo -n "  Starting Celery worker... "
 cd "$BACKEND"
 source "$VENV/bin/activate"
-CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-$(python3 -c "import os; print(max(2, min(8, (os.cpu_count() or 4) // 2)))")}
-nohup "$VENV/bin/celery" -A app.workers.celery_app worker --loglevel=info --pool=threads --concurrency=$CELERY_CONCURRENCY > "$ROOT/celery.log" 2>&1 &
+# Limit concurrency to 3 on macOS to prevent OOM/CPU thrashing with multiple heavy ML models
+if [ "$(uname)" = "Darwin" ]; then
+  CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-3}
+  CELERY_POOL=${CELERY_POOL:-threads}
+else
+  CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-$(python3 -c "import os; print(max(2, min(8, (os.cpu_count() or 4) // 2)))")}
+  CELERY_POOL=${CELERY_POOL:-prefork}
+fi
+nohup "$VENV/bin/celery" -A app.workers.celery_app worker --loglevel=info --pool=$CELERY_POOL --concurrency=$CELERY_CONCURRENCY > "$ROOT/celery.log" 2>&1 &
 echo $! >> "$PID_FILE"
 sleep 3
 if pgrep -f "celery.*worker" > /dev/null 2>&1; then
@@ -365,7 +372,7 @@ echo -e "  ${GREEN}Frontend:${NC}    http://localhost:3000"
 echo -e "  ${GREEN}API docs:${NC}    http://localhost:8000/docs"
   echo -e "  ${GREEN}MinIO:${NC}       http://localhost:9003 (clipforge / clipforge_dev)"
 echo ""
-echo -e "  ${YELLOW}Login:${NC}       test@clipforge.dev / password123"
+echo -e "  ${YELLOW}Login:${NC}       Register at http://localhost:3000"
 echo ""
 echo -e "  ${CYAN}Logs:${NC}"
 echo -e "    API:       tail -f $ROOT/api.log"

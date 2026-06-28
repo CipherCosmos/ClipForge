@@ -36,10 +36,12 @@ def _has_mlx() -> bool:
         _mlx_available = False
         return False
     try:
-        import mlx_whisper
-        _mlx_available = True
-        logger.info("MLX Whisper available — will use Metal GPU")
-    except ImportError:
+        import importlib.util
+
+        _mlx_available = importlib.util.find_spec("mlx_whisper") is not None
+        if _mlx_available:
+            logger.info("MLX Whisper available — will use Metal GPU")
+    except Exception:
         _mlx_available = False
     return _mlx_available
 
@@ -55,14 +57,24 @@ def _get_local_model(model_size: str | None = None) -> Any:
         return _local_model[model_size]
 
     from faster_whisper import WhisperModel
-    from app.services.device import get_whisper_compute_type, get_whisper_device, get_optimal_threads
+
+    from app.services.device import (
+        get_optimal_threads,
+        get_whisper_compute_type,
+        get_whisper_device,
+    )
 
     device = get_whisper_device()
     compute_type = get_whisper_compute_type(device)
     threads = get_optimal_threads()
 
-    logger.info("Loading Whisper %s on %s (compute=%s, threads=%d)",
-                model_size, device, compute_type, threads)
+    logger.info(
+        "Loading Whisper %s on %s (compute=%s, threads=%d)",
+        model_size,
+        device,
+        compute_type,
+        threads,
+    )
     m = WhisperModel(model_size, device=device, compute_type=compute_type, cpu_threads=threads)
     _local_model[model_size] = m
     return m
@@ -71,20 +83,13 @@ def _get_local_model(model_size: str | None = None) -> Any:
 # ── Model size auto-selection ─────────────────────────────────────────────
 def _auto_model_size(audio_path: str) -> str:
     """Pick smaller model for very long audio (over 30 min) to save memory."""
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-            capture_output=True, text=True, timeout=15
-        )
-        duration = float(result.stdout.strip())
-        if duration > 7200:
-            return "small"
-        if duration > 1800:
-            return "medium"
-    except Exception:
-        pass
+    from app.services.video import get_media_duration
+
+    duration = get_media_duration(audio_path, default=0.0)
+    if duration > 7200:
+        return "small"
+    if duration > 1800:
+        return "medium"
     return settings.WHISPER_MODEL_SIZE
 
 
@@ -100,57 +105,97 @@ def get_model(model_size: str | None = None) -> Any:
 
 # ── Groq Cloud API (fastest, any platform) ─────────────────────────────────
 def _transcribe_groq(audio_path: str) -> dict[str, Any]:
-    import httpx
     import subprocess
     import tempfile
+
+    import httpx
 
     logger.info("Transcribing via Groq Cloud Whisper API...")
     url = "https://api.groq.com/openai/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {settings.GROQ_API_KEY}"}
-    
-    # Compress audio if it exceeds Groq's 25MB limit
-    file_size = os.path.getsize(audio_path)
-    upload_path = audio_path
-    needs_cleanup = False
-    
-    if file_size > 20 * 1024 * 1024:  # 20MB — compress before upload
-        try:
-            fd, upload_path = tempfile.mkstemp(suffix=".mp3")
-            os.close(fd)
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000",
-                 "-b:a", "32k", "-f", "mp3", upload_path],
-                capture_output=True, timeout=60, check=True
-            )
-            needs_cleanup = True
-            logger.info("Compressed audio from %.1fMB to %.1fMB for Groq upload",
-                        file_size / 1e6, os.path.getsize(upload_path) / 1e6)
-        except Exception as e:
-            logger.warning("Audio compression failed: %s, uploading original", e)
-            upload_path = audio_path
 
-    with open(upload_path, "rb") as f:
-        files = {"file": (os.path.basename(upload_path), f, "audio/mp3" if upload_path.endswith('.mp3') else "audio/wav")}
-        data = {
-            "model": getattr(settings, "GROQ_WHISPER_MODEL", "whisper-large-v3"),
-            "response_format": "verbose_json",
-        }
-        with httpx.Client(timeout=180.0) as client:
-            resp = client.post(url, files=files, data=data, headers=headers)
-            
-            # If still too large, fall back to local transcription
-            if resp.status_code == 413:
-                logger.warning("Groq rejected audio (413), falling back to local transcription")
-                if needs_cleanup and upload_path != audio_path:
-                    os.unlink(upload_path)
-                raise _GroqOverloadError("Groq payload too large")
-            
-            resp.raise_for_status()
-            result = resp.json()
-    
-    if needs_cleanup and upload_path != audio_path:
-        try: os.unlink(upload_path)
-        except: pass
+    try:
+        # Compress audio if it exceeds Groq's 25MB limit
+        file_size = os.path.getsize(audio_path)
+        upload_path = audio_path
+        needs_cleanup = False
+
+        if file_size > 20 * 1024 * 1024:  # 20MB — compress before upload
+            try:
+                fd, upload_path = tempfile.mkstemp(suffix=".mp3")
+                os.close(fd)
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        audio_path,
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-b:a",
+                        "32k",
+                        "-f",
+                        "mp3",
+                        upload_path,
+                    ],
+                    capture_output=True,
+                    timeout=60,
+                    check=True,
+                )
+                needs_cleanup = True
+                logger.info(
+                    "Compressed audio from %.1fMB to %.1fMB for Groq upload",
+                    file_size / 1e6,
+                    os.path.getsize(upload_path) / 1e6,
+                )
+            except Exception as e:
+                logger.warning("Audio compression failed: %s, uploading original", e)
+                upload_path = audio_path
+
+        with open(upload_path, "rb") as f:
+            files = {
+                "file": (
+                    os.path.basename(upload_path),
+                    f,
+                    "audio/mp3" if upload_path.endswith(".mp3") else "audio/wav",
+                )
+            }
+            data = {
+                "model": getattr(settings, "GROQ_WHISPER_MODEL", "whisper-large-v3"),
+                "response_format": "verbose_json",
+            }
+            with httpx.Client(timeout=180.0) as client:
+                resp = client.post(url, files=files, data=data, headers=headers)
+
+                if resp.status_code == 413:
+                    raise _GroqOverloadError("Groq payload too large")
+
+                resp.raise_for_status()
+                result = resp.json()
+
+        if needs_cleanup and upload_path != audio_path:
+            try:
+                os.unlink(upload_path)
+            except Exception:
+                pass
+
+    except _GroqOverloadError:
+        if needs_cleanup and upload_path != audio_path:
+            try:
+                os.unlink(upload_path)
+            except Exception:
+                pass
+        raise
+    except Exception as e:
+        logger.warning("Groq transcription failed: %s, falling back to local transcription", e)
+        if needs_cleanup and upload_path != audio_path:
+            try:
+                os.unlink(upload_path)
+            except Exception:
+                pass
+        raise _GroqOverloadError(str(e)) from e
 
     segments = []
     for seg in result.get("segments", []):
@@ -163,10 +208,14 @@ def _transcribe_groq(audio_path: str) -> dict[str, Any]:
             duration = max(0.1, end - start)
             word_dur = duration / len(text_words)
             for i, w in enumerate(text_words):
-                words.append({
-                    "word": w, "start": round(start + i * word_dur, 2),
-                    "end": round(start + (i + 1) * word_dur, 2), "probability": 1.0,
-                })
+                words.append(
+                    {
+                        "word": w,
+                        "start": round(start + i * word_dur, 2),
+                        "end": round(start + (i + 1) * word_dur, 2),
+                        "probability": 1.0,
+                    }
+                )
         segments.append({"start": start, "end": end, "text": text, "words": words})
 
     duration = round(result.get("duration", 0.0), 2)
@@ -236,8 +285,10 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
     t0 = time.time()
 
     result = mlx_whisper.transcribe(
-        audio_path, path_or_hf_repo=mlx_model,
-        word_timestamps=True, verbose=False,
+        audio_path,
+        path_or_hf_repo=mlx_model,
+        word_timestamps=True,
+        verbose=False,
     )
 
     elapsed = time.time() - t0
@@ -245,17 +296,22 @@ def _transcribe_mlx(audio_path: str, model_size: str = "large-v3-turbo") -> dict
 
     segments = []
     for seg in result.get("segments", []):
-        segments.append({
-            "start": round(seg["start"], 2),
-            "end": round(seg["end"], 2),
-            "text": seg["text"].strip(),
-            "words": [{
-                "word": w["word"].strip(),
-                "start": round(w["start"], 2),
-                "end": round(w["end"], 2),
-                "probability": w.get("probability", 0.0),
-            } for w in seg.get("words", [])],
-        })
+        segments.append(
+            {
+                "start": round(seg["start"], 2),
+                "end": round(seg["end"], 2),
+                "text": seg["text"].strip(),
+                "words": [
+                    {
+                        "word": w["word"].strip(),
+                        "start": round(w["start"], 2),
+                        "end": round(w["end"], 2),
+                        "probability": w.get("probability", 0.0),
+                    }
+                    for w in seg.get("words", [])
+                ],
+            }
+        )
 
     duration = round(segments[-1]["end"], 2) if segments else 0
     return {
@@ -273,10 +329,11 @@ def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> di
     On Windows/Linux with NVIDIA GPU: uses CUDA float16 for ~5-10x realtime.
     On any system without GPU: uses CPU int8.
     """
-    from faster_whisper import WhisperModel
-    from faster_whisper.audio import decode_audio
     from concurrent.futures import ThreadPoolExecutor
-    from app.services.device import get_whisper_device, get_cuda_vram_gb
+
+    from faster_whisper.audio import decode_audio
+
+    from app.services.device import get_cuda_vram_gb, get_whisper_device
 
     model = _get_local_model(model_size)
     device = get_whisper_device()
@@ -295,22 +352,34 @@ def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> di
         beam = 5 if vram_gb >= 8 else 3
         logger.info("CUDA transcription: beam_size=%d, VRAM=%.1fGB", beam, vram_gb)
         segments, info = model.transcribe(
-            audio, beam_size=beam, word_timestamps=True,
+            audio,
+            beam_size=beam,
+            word_timestamps=True,
         )
         results = []
         for segment in segments:
-            results.append({
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": segment.text.strip(),
-                "words": [{
-                    "word": w.word, "start": round(w.start, 2),
-                    "end": round(w.end, 2), "probability": w.probability,
-                } for w in (segment.words or [])],
-            })
+            results.append(
+                {
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2),
+                    "text": segment.text.strip(),
+                    "words": [
+                        {
+                            "word": w.word,
+                            "start": round(w.start, 2),
+                            "end": round(w.end, 2),
+                            "probability": w.probability,
+                        }
+                        for w in (segment.words or [])
+                    ],
+                }
+            )
         elapsed = time.time() - t0
-        logger.info("CUDA transcription done in %.2fs (x%.1f realtime)",
-                    elapsed, total_duration / elapsed if elapsed else 0)
+        logger.info(
+            "CUDA transcription done in %.2fs (x%.1f realtime)",
+            elapsed,
+            total_duration / elapsed if elapsed else 0,
+        )
         return {
             "language": info.language,
             "language_probability": info.language_probability,
@@ -321,19 +390,29 @@ def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> di
     # CPU path: sequential for short audio, parallel chunks for long
     if total_duration <= 120:
         segments, info = model.transcribe(
-            audio, beam_size=1, best_of=1, word_timestamps=True,
+            audio,
+            beam_size=1,
+            best_of=1,
+            word_timestamps=True,
         )
         results = []
         for segment in segments:
-            results.append({
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": segment.text.strip(),
-                "words": [{
-                    "word": w.word, "start": round(w.start, 2),
-                    "end": round(w.end, 2), "probability": w.probability,
-                } for w in (segment.words or [])],
-            })
+            results.append(
+                {
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2),
+                    "text": segment.text.strip(),
+                    "words": [
+                        {
+                            "word": w.word,
+                            "start": round(w.start, 2),
+                            "end": round(w.end, 2),
+                            "probability": w.probability,
+                        }
+                        for w in (segment.words or [])
+                    ],
+                }
+            )
         elapsed = time.time() - t0
         logger.info("CPU transcription done in %.2fs", elapsed)
         return {
@@ -344,7 +423,7 @@ def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> di
         }
 
     # Long audio CPU path: parallel chunked transcription
-    sample_30s = audio[:16000 * 30]
+    sample_30s = audio[: 16000 * 30]
     _, detect_info = model.transcribe(sample_30s, beam_size=1, best_of=1)
     detected_lang = detect_info.language
     logger.info("Detected language: %s", detected_lang)
@@ -352,25 +431,40 @@ def _transcribe_local(audio_path: str, model_size: str = "large-v3-turbo") -> di
     sr = 16000
     chunk_len_seconds = 60
     chunk_samples = chunk_len_seconds * sr
-    chunks = [(audio[off:off + chunk_samples], off / sr) for off in range(0, len(audio), chunk_samples)]
+    chunks = [
+        (audio[off : off + chunk_samples], off / sr) for off in range(0, len(audio), chunk_samples)
+    ]
 
     from app.services.device import get_optimal_threads
+
     max_workers = get_optimal_threads()
 
     def _transcribe_chunk(args):
         chunk_audio, chunk_start = args
         segs, _ = model.transcribe(
-            chunk_audio, beam_size=1, best_of=1,
-            word_timestamps=True, language=detected_lang,
+            chunk_audio,
+            beam_size=1,
+            best_of=1,
+            word_timestamps=True,
+            language=detected_lang,
         )
-        return [{
-            "start": round(s.start + chunk_start, 2),
-            "end": round(s.end + chunk_start, 2),
-            "text": s.text.strip(),
-            "words": [{"word": w.word, "start": round(w.start + chunk_start, 2),
-                        "end": round(w.end + chunk_start, 2), "probability": w.probability}
-                      for w in (s.words or [])],
-        } for s in segs]
+        return [
+            {
+                "start": round(s.start + chunk_start, 2),
+                "end": round(s.end + chunk_start, 2),
+                "text": s.text.strip(),
+                "words": [
+                    {
+                        "word": w.word,
+                        "start": round(w.start + chunk_start, 2),
+                        "end": round(w.end + chunk_start, 2),
+                        "probability": w.probability,
+                    }
+                    for w in (s.words or [])
+                ],
+            }
+            for s in segs
+        ]
 
     all_segments = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

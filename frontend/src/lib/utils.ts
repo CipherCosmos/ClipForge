@@ -17,13 +17,19 @@ export function formatDate(dateStr: string): string {
   const now = new Date()
   const diff = now.getTime() - d.getTime()
   const days = Math.floor(diff / 86400000)
-
   if (days === 0) return "Today"
   if (days === 1) return "Yesterday"
   if (days < 7) return `${days}d ago`
   if (days < 30) return `${Math.floor(days / 7)}w ago`
   if (days < 365) return `${Math.floor(days / 30)}mo ago`
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+export function formatTime(seconds: number): string {
+  if (seconds === 0) return "0:00"
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toFixed(2).padStart(5, "0")}`
 }
 
 export function formatScore(score: number): string {

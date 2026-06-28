@@ -3,6 +3,7 @@
 Tests: transcription → NLP scoring → scene detection + audio analysis → render + export.
 All external services (Whisper, Ollama, SenseVoice, diarize, MinIO, FFmpeg) are mocked.
 """
+
 import json
 import sys
 import uuid
@@ -39,9 +40,17 @@ def mock_video():
     video.title = "Test Video"
 
     segments = [
-        {**seg, "score": 0.0, "emotion_intensity": 0.0, "keyword_density": 0.0,
-         "scene_change_intensity": 0.0, "audio_energy": 0.0, "viral_score": 0.0,
-         "hook_score": 0.0, "engagement_potential": 0.0}
+        {
+            **seg,
+            "score": 0.0,
+            "emotion_intensity": 0.0,
+            "keyword_density": 0.0,
+            "scene_change_intensity": 0.0,
+            "audio_energy": 0.0,
+            "viral_score": 0.0,
+            "hook_score": 0.0,
+            "engagement_potential": 0.0,
+        }
         for seg in SAMPLE_SEGMENTS_RAW
     ]
     video.segments = segments
@@ -61,6 +70,7 @@ def mock_job():
 
 
 # ── Step 1: Transcription → Segments ──────────────────────────────────────
+
 
 class TestTranscriptionStep:
     """Test that transcription correctly converts raw Whisper output to segments."""
@@ -90,8 +100,8 @@ class TestTranscriptionStep:
 
             session.query.return_value.filter.return_value.first.side_effect = [
                 video,  # Query: video
-                None,   # Query: trans_job (no job)
-                None,   # Query: highlight_job (no job)
+                None,  # Query: trans_job (no job)
+                None,  # Query: highlight_job (no job)
             ]
 
             # Prevent the downstream chain call from failing
@@ -122,10 +132,11 @@ class TestTranscriptionStep:
 
 # ── Step 2: NLP Scoring ──────────────────────────────────────────────────
 
+
 class TestNLPScoringStep:
     """Test that NLP scoring correctly calls Ollama and sets scores."""
 
-    @patch("app.workers.nlp._call_ollama")
+    @patch("app.workers.nlp._call_llm")
     @patch("app.workers.nlp.fetch_trending_keywords")
     @patch("app.workers.nlp.SyncSessionLocal")
     def test_nlp_scores_all_segments(self, mock_session_cls, mock_trending, mock_ollama):
@@ -142,26 +153,42 @@ class TestNLPScoringStep:
 
         # Create mutable segments
         segments = [
-            {"start": i * 2.5, "end": (i + 1) * 2.5, "text": seg["text"],
-             "hook_score": 0.0, "emotion_intensity": 0.0,
-             "engagement_potential": 0.0, "keyword_density": 0.0,
-             "viral_score": 0.0, "scene_change_intensity": 0.0, "audio_energy": 0.0}
+            {
+                "start": i * 2.5,
+                "end": (i + 1) * 2.5,
+                "text": seg["text"],
+                "hook_score": 0.0,
+                "emotion_intensity": 0.0,
+                "engagement_potential": 0.0,
+                "keyword_density": 0.0,
+                "viral_score": 0.0,
+                "scene_change_intensity": 0.0,
+                "audio_energy": 0.0,
+            }
             for i, seg in enumerate(SAMPLE_SEGMENTS_RAW)
         ]
         video.segments = segments
 
         session.query.return_value.filter.return_value.first.side_effect = [
             video,  # First query: video
-            None,   # Job query
+            None,  # Job query
         ]
 
         # Mock Ollama returning high scores for first segment, low for others
         def ollama_side_effect(text, language=None):
             if "amazing" in text:
-                return {"hook_score": 0.9, "emotion_intensity": 0.8,
-                        "engagement_potential": 0.85, "keyword_density": 0.5}
-            return {"hook_score": 0.3, "emotion_intensity": 0.3,
-                    "engagement_potential": 0.3, "keyword_density": 0.2}
+                return {
+                    "hook_score": 0.9,
+                    "emotion_intensity": 0.8,
+                    "engagement_potential": 0.85,
+                    "keyword_density": 0.5,
+                }
+            return {
+                "hook_score": 0.3,
+                "emotion_intensity": 0.3,
+                "engagement_potential": 0.3,
+                "keyword_density": 0.2,
+            }
 
         mock_ollama.side_effect = ollama_side_effect
 
@@ -180,6 +207,7 @@ class TestNLPScoringStep:
 
 
 # ── Step 3: Scene Detection + Audio Analysis ─────────────────────────────
+
 
 class TestSceneDetectStep:
     """Test scene detection + audio analysis + viral score recalculation."""
@@ -220,7 +248,7 @@ class TestSceneDetectStep:
 
     def test_viral_score_with_all_dimensions(self):
         """Test the viral score calculates correctly with all 8 dimensions."""
-        from app.workers.scene_detect import _calculate_viral_score
+        from app.services.scoring import calculate_viral_score
 
         seg = {
             "hook_score": 0.9,
@@ -232,16 +260,23 @@ class TestSceneDetectStep:
             "audio_energy": 0.4,
             "speaker_confidence": 0.9,
         }
-        score = _calculate_viral_score(seg)
+        score = calculate_viral_score(seg)
 
         expected = (
-            0.25 * 0.9 + 0.20 * 0.8 + 0.15 * 0.85 + 0.10 * 0.5 +
-            0.10 * 0.3 + 0.10 * 0.5 + 0.05 * 0.4 + 0.05 * 0.9
+            0.25 * 0.9
+            + 0.20 * 0.8
+            + 0.15 * 0.85
+            + 0.10 * 0.5
+            + 0.10 * 0.3
+            + 0.10 * 0.5
+            + 0.05 * 0.4
+            + 0.05 * 0.9
         )
         assert score == pytest.approx(expected)
 
 
 # ── Step 4: Render + Export ──────────────────────────────────────────────
+
 
 class TestRenderStep:
     """Test clip rendering and exporting logic."""
@@ -275,21 +310,23 @@ class TestRenderStep:
         top = _get_top_segments(segments, n=5)
         assert len(top) == 0
 
-    @patch("app.workers.render.httpx.Client")
-    def test_metadata_generation(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_metadata_generation(self, mock_get_http):
         """Test Ollama-based metadata generation."""
         from app.workers.render import _generate_clip_metadata
 
         mock_client = MagicMock()
-        mock_client_class.return_value.__enter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "response": json.dumps({
-                "title": "Amazing Discovery!",
-                "caption": "This will blow your mind! #science #discovery",
-                "hashtags": "#science,#discovery,#viral",
-            })
+            "response": json.dumps(
+                {
+                    "title": "Amazing Discovery!",
+                    "caption": "This will blow your mind! #science #discovery",
+                    "hashtags": "#science,#discovery,#viral",
+                }
+            )
         }
         mock_client.post.return_value = mock_response
 
@@ -298,12 +335,12 @@ class TestRenderStep:
         assert meta["title"] == "Amazing Discovery!"
         assert "#science" in meta["hashtags"]
 
-    @patch("app.workers.render.httpx.Client")
-    def test_metadata_fallback_on_error(self, mock_client_class):
+    @patch("app.services.llm._get_http")
+    def test_metadata_fallback_on_error(self, mock_get_http):
         """Test metadata falls back gracefully on Ollama error."""
         from app.workers.render import _generate_clip_metadata
 
-        mock_client = mock_client_class.return_value.__enter__.return_value
+        mock_client = mock_get_http.return_value
         mock_client.post.side_effect = ValueError("API down")
 
         meta = _generate_clip_metadata("Test transcript text")
@@ -312,19 +349,49 @@ class TestRenderStep:
         assert meta["caption"] == "Test transcript text"
 
 
-# ── Step 5: Full Pipeline Chain ──────────────────────────────────────────
+# ── Step 5: Watermark / Plan Gating ─────────────────────────────────────
+
+
+class TestWatermarkPlanGating:
+    """Test that watermark is applied based on user plan."""
+
+    @patch("app.services.branding.has_drawtext", return_value=True)
+    def test_plan_gating_affects_render(self, mock_has_drawtext):
+        """Verify free users get watermark applied."""
+        from app.services.branding import BrandConfig, build_watermark_filter
+
+        brand = BrandConfig(watermark_text="@ClipForge")
+        filters = build_watermark_filter(brand, 1080, 1920)
+        assert len(filters) == 1
+        assert "@ClipForge" in filters[0]
+
+    @patch("app.services.branding.has_drawtext", return_value=True)
+    def test_no_watermark_when_empty_text(self, mock_has_drawtext):
+        """Verify no watermark filter when text is empty."""
+        from app.services.branding import BrandConfig, build_watermark_filter
+
+        brand = BrandConfig(watermark_text="")
+        filters = build_watermark_filter(brand, 1080, 1920)
+        assert len(filters) == 0
+
+
+# ── Step 6: Full Pipeline Chain ──────────────────────────────────────────
+
 
 class TestPipelineChain:
     """Test the full pipeline chain: event ordering and dependencies."""
 
-    def test_transcription_enqueues_parallel_chord(self):
-        """Verify transcription calls chord with run_nlp and run_scene_detect."""
+    def test_transcription_enqueues_parallel_tasks(self):
+        """Verify transcription enqueues run_nlp and run_scene_detect independently."""
         from app.workers.transcription import run_transcription
-        with patch("app.workers.transcription.transcribe_audio") as mock_ta, \
-             patch("app.workers.transcription.download_file"), \
-             patch("app.workers.transcription.SyncSessionLocal") as mock_sc, \
-             patch("celery.chord") as mock_chord:
 
+        with (
+            patch("app.workers.transcription.transcribe_audio") as mock_ta,
+            patch("app.workers.transcription.download_file"),
+            patch("app.workers.transcription.SyncSessionLocal") as mock_sc,
+            patch("app.workers.nlp.run_nlp.delay") as mock_nlp,
+            patch("app.workers.scene_detect.run_scene_detect.delay") as mock_scene,
+        ):
             session = MagicMock()
             mock_sc.return_value = session
             video = MagicMock()
@@ -333,9 +400,7 @@ class TestPipelineChain:
             video.segments = None
             video.transcript = None
 
-            session.query.return_value.filter.return_value.first.side_effect = [
-                video, None, None
-            ]
+            session.query.return_value.filter.return_value.first.side_effect = [video, None, None]
 
             mock_ta.return_value = {
                 "segments": [{"start": 0.0, "end": 1.0, "text": "test"}],
@@ -344,35 +409,45 @@ class TestPipelineChain:
 
             run_transcription(str(video.id))
 
-            # Verify chord was enqueued
-            mock_chord.assert_called_once()
+            # Verify both tasks were enqueued independently (no chord)
+            mock_nlp.assert_called_once()
+            mock_scene.assert_called_once()
 
     def test_nlp_returns_segments(self):
         """Verify NLP returns segments for chord."""
         from app.workers.nlp import run_nlp
-        with patch("app.workers.nlp._call_ollama") as mock_ollama, \
-             patch("app.workers.nlp.fetch_trending_keywords", return_value=[]), \
-             patch("app.workers.nlp.SyncSessionLocal") as mock_sc:
 
+        with (
+            patch("app.workers.nlp._call_llm") as mock_ollama,
+            patch("app.workers.nlp.fetch_trending_keywords", return_value=[]),
+            patch("app.workers.nlp.SyncSessionLocal") as mock_sc,
+        ):
             session = MagicMock()
             mock_sc.return_value = session
             video = MagicMock()
             video.id = uuid.uuid4()
             video.segments = [
-                {"start": 0.0, "end": 1.0, "text": "this is a longer test sentence",
-                 "hook_score": 0.0, "emotion_intensity": 0.0,
-                 "engagement_potential": 0.0, "keyword_density": 0.0,
-                 "viral_score": 0.0, "scene_change_intensity": 0.0,
-                 "audio_energy": 0.0}
+                {
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "this is a longer test sentence",
+                    "hook_score": 0.0,
+                    "emotion_intensity": 0.0,
+                    "engagement_potential": 0.0,
+                    "keyword_density": 0.0,
+                    "viral_score": 0.0,
+                    "scene_change_intensity": 0.0,
+                    "audio_energy": 0.0,
+                }
             ]
 
-            session.query.return_value.filter.return_value.first.side_effect = [
-                video, None
-            ]
+            session.query.return_value.filter.return_value.first.side_effect = [video, None]
 
             mock_ollama.return_value = {
-                "hook_score": 0.5, "emotion_intensity": 0.5,
-                "engagement_potential": 0.5, "keyword_density": 0.5,
+                "hook_score": 0.5,
+                "emotion_intensity": 0.5,
+                "engagement_potential": 0.5,
+                "keyword_density": 0.5,
             }
 
             result = run_nlp(str(video.id))
@@ -383,29 +458,37 @@ class TestPipelineChain:
     def test_scene_detect_returns_segments(self):
         """Verify scene_detect returns segments for chord."""
         from app.workers.scene_detect import run_scene_detect
-        with patch("app.workers.scene_detect.download_file"), \
-             patch("app.workers.scene_detect.extract_full_audio"), \
-             patch("app.workers.scene_detect.SyncSessionLocal") as mock_sc, \
-             patch("app.workers.scene_detect._detect_scenes", return_value=[]), \
-             patch("tempfile.mkdtemp"):
 
+        with (
+            patch("app.workers.scene_detect.download_file"),
+            patch("app.workers.scene_detect.extract_full_audio"),
+            patch("app.workers.scene_detect.SyncSessionLocal") as mock_sc,
+            patch("app.workers.scene_detect._detect_scenes", return_value=[]),
+            patch("tempfile.mkdtemp"),
+        ):
             session = MagicMock()
             mock_sc.return_value = session
             video = MagicMock()
             video.id = uuid.uuid4()
             video.source_url = "videos/mock/v.mp4"
             video.segments = [
-                {"start": 0.0, "end": 2.5, "text": "test",
-                 "hook_score": 0.5, "emotion_intensity": 0.5,
-                 "engagement_potential": 0.5, "keyword_density": 0.5,
-                 "scene_change_intensity": 0.0, "audio_event_score": 0.0,
-                 "audio_energy": 0.0, "speaker_confidence": 0.0,
-                 "viral_score": 0.0}
+                {
+                    "start": 0.0,
+                    "end": 2.5,
+                    "text": "test",
+                    "hook_score": 0.5,
+                    "emotion_intensity": 0.5,
+                    "engagement_potential": 0.5,
+                    "keyword_density": 0.5,
+                    "scene_change_intensity": 0.0,
+                    "audio_event_score": 0.0,
+                    "audio_energy": 0.0,
+                    "speaker_confidence": 0.0,
+                    "viral_score": 0.0,
+                }
             ]
 
-            session.query.return_value.filter.return_value.first.side_effect = [
-                video, None
-            ]
+            session.query.return_value.filter.return_value.first.side_effect = [video, None]
 
             with patch("os.path.exists") as mock_exists:
                 mock_exists.return_value = False
@@ -417,28 +500,41 @@ class TestPipelineChain:
 
 # ── Step 6: Viral Score Formula Validation ───────────────────────────────
 
+
 class TestViralScoreFormula:
     """Validate the viral score formula produces correct weighted results."""
 
     def test_hook_dominance(self):
         """Segments with strong hooks should score highest."""
-        from app.workers.scene_detect import _calculate_viral_score
+        from app.services.scoring import calculate_viral_score
 
-        strong_hook = _calculate_viral_score({
-            "hook_score": 1.0, "emotion_intensity": 0.0,
-            "engagement_potential": 0.0, "keyword_density": 0.0,
-            "scene_change_intensity": 0.0, "audio_event_score": 0.0,
-            "audio_energy": 0.0, "speaker_confidence": 0.0,
-        })
+        strong_hook = calculate_viral_score(
+            {
+                "hook_score": 1.0,
+                "emotion_intensity": 0.0,
+                "engagement_potential": 0.0,
+                "keyword_density": 0.0,
+                "scene_change_intensity": 0.0,
+                "audio_event_score": 0.0,
+                "audio_energy": 0.0,
+                "speaker_confidence": 0.0,
+            }
+        )
         # Hook weight is 0.25
         assert strong_hook == pytest.approx(0.25)
 
-        strong_emotion = _calculate_viral_score({
-            "hook_score": 0.0, "emotion_intensity": 1.0,
-            "engagement_potential": 0.0, "keyword_density": 0.0,
-            "scene_change_intensity": 0.0, "audio_event_score": 0.0,
-            "audio_energy": 0.0, "speaker_confidence": 0.0,
-        })
+        strong_emotion = calculate_viral_score(
+            {
+                "hook_score": 0.0,
+                "emotion_intensity": 1.0,
+                "engagement_potential": 0.0,
+                "keyword_density": 0.0,
+                "scene_change_intensity": 0.0,
+                "audio_event_score": 0.0,
+                "audio_energy": 0.0,
+                "speaker_confidence": 0.0,
+            }
+        )
         # Emotion weight is 0.20
         assert strong_emotion == pytest.approx(0.20)
 
@@ -447,17 +543,21 @@ class TestViralScoreFormula:
 
     def test_trend_boost_magnifies_score(self):
         """Trend boost should multiply the final viral score."""
+        from app.services.scoring import calculate_viral_score
         from app.services.trends import compute_trend_boost
-        from app.workers.scene_detect import _calculate_viral_score
 
         seg = {
-            "hook_score": 0.5, "emotion_intensity": 0.5,
-            "engagement_potential": 0.5, "keyword_density": 0.5,
-            "scene_change_intensity": 0.5, "audio_event_score": 0.5,
-            "audio_energy": 0.5, "speaker_confidence": 0.5,
+            "hook_score": 0.5,
+            "emotion_intensity": 0.5,
+            "engagement_potential": 0.5,
+            "keyword_density": 0.5,
+            "scene_change_intensity": 0.5,
+            "audio_event_score": 0.5,
+            "audio_energy": 0.5,
+            "speaker_confidence": 0.5,
         }
 
-        base_score = _calculate_viral_score(seg)
+        base_score = calculate_viral_score(seg)
         boost = compute_trend_boost("AI technology machine learning")
 
         # Trend boost should be >= 1.0

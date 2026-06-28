@@ -1,6 +1,8 @@
+import os
 import ssl
 
 from celery import Celery
+from celery.signals import worker_process_init
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -32,17 +34,50 @@ celery_app.conf.update(
         "app.workers.join_worker",
         "app.workers.render",
         "app.workers.dubbing",
+        "app.workers.scheduler",
+        "app.workers.cleanup",
     ],
+    beat_schedule={
+        "check-scheduled-publishes": {
+            "task": "app.workers.scheduler.check_scheduled_publishes",
+            "schedule": 60.0,
+        },
+        "cleanup-stale-jobs": {
+            "task": "app.workers.cleanup.run_cleanup",
+            "schedule": 300.0,
+        },
+    },
 )
 
 sync_engine = create_engine(
     settings.DATABASE_URL_SYNC,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+    max_overflow=int(os.getenv("DB_POOL_OVERFLOW", "20")),
     pool_recycle=3600,
+    pool_use_lifo=True,
     connect_args={"connect_timeout": 10},
 )
 SyncSessionLocal = sessionmaker(bind=sync_engine)
 
 celery_app.autodiscover_tasks(["app.workers"])
+
+
+# ── Fix: dispose sync engine after fork to prevent DB connection sync errors ──
+@celery_app.on_after_finalize.connect
+def setup_cleanup(sender, **kwargs):
+    try:
+        from app.workers.cleanup import reset_stale_jobs
+
+        reset_stale_jobs()
+    except Exception:
+        pass
+
+
+@worker_process_init.connect
+def fix_db_connections(**kwargs):
+    """Dispose the sync engine after fork so each child creates fresh connections."""
+    try:
+        sync_engine.dispose()
+    except Exception:
+        pass

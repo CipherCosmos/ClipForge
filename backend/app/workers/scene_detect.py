@@ -1,13 +1,15 @@
 """Scene detection using PySceneDetect v0.7 (BSD license)."""
+
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
 import uuid
 
 from scenedetect import SceneManager, open_video
 from scenedetect.detectors import AdaptiveDetector, ContentDetector
 from sqlalchemy import and_
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.ws import broadcast_sync
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
@@ -18,6 +20,7 @@ from app.services.emotion import (
     extract_full_audio_features,
     get_segment_prosody_from_full,
 )
+from app.services.scoring import calculate_viral_score
 from app.services.storage import download_file
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
@@ -73,20 +76,6 @@ def _assign_scene_intensity(segments: list[dict], boundaries: list[float]) -> li
     return segments
 
 
-def _calculate_viral_score(seg: dict) -> float:
-    """Recalculate viral score with all available dimensions."""
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
-
-
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
 def run_scene_detect(self, video_id: str):
     session = SyncSessionLocal()
@@ -103,8 +92,7 @@ def run_scene_detect(self, video_id: str):
 
         # ── Smart Resume: skip if segments already have scene/audio data ──
         has_scene_data = bool(segments) and all(
-            isinstance(s, dict) and "speaker_confidence" in s
-            for s in segments
+            isinstance(s, dict) and "speaker_confidence" in s for s in segments
         )
 
         job = (
@@ -143,67 +131,111 @@ def run_scene_detect(self, video_id: str):
         tmp_path = os.path.join(tmpdir, "input.mp4")
         download_file(video.source_url, tmp_path)
 
+        # Downscale to 480p at 5fps for fast scene detection (cuts detectable at any resolution/fps)
+        downscaled_path = os.path.join(tmpdir, "input_detect.mp4")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    tmp_path,
+                    "-vf",
+                    "scale=854:480,fps=5",
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-crf",
+                    "28",
+                    downscaled_path,
+                ],
+                capture_output=True,
+                timeout=60,
+                check=True,
+            )
+            detect_path = downscaled_path
+            logger.info("Downscaled video to 480p@5fps for fast scene detection")
+        except Exception as e:
+            logger.warning("Downscale failed, using original: %s", e)
+            detect_path = tmp_path
+
         # Extract full audio for emotion/event analysis
         audio_path = extract_full_audio(tmp_path)
 
-        # Scene detection
+        # Scene detection (on downscaled video for speed)
         logger.info("Detecting scenes for video %s", video_id)
         broadcast_sync(video_id, "scene_detect", 0.0, "running", "Detecting scenes")
-        boundaries = _detect_scenes(tmp_path)
+        boundaries = _detect_scenes(detect_path)
         segments = _assign_scene_intensity(segments, boundaries)
 
         if job:
             job.progress = 0.5
             session.commit()
 
-        # Speaker diarization
-        try:
-            logger.info("Running speaker diarization for video %s", video_id)
-            diarization = diarize_audio(audio_path)
-            segments = assign_speaker_scores(segments, diarization)
-            logger.info(
-                "Diarization complete: %d speakers detected",
-                len(set(d["speaker"] for d in diarization)) if diarization else 0,
-            )
-        except Exception as e:
-            logger.warning("Diarization failed for video %s: %s", video_id, e)
+        # Concurrently execute diarization, audio emotion/event analysis, and prosody extraction
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _run_diarization():
+            try:
+                logger.info("Running speaker diarization for video %s", video_id)
+                return diarize_audio(audio_path)
+            except Exception as e:
+                logger.warning("Diarization failed for video %s: %s", video_id, e)
+                return []
+
+        def _run_emotions():
+            try:
+                logger.info(
+                    "Running single-pass audio emotion & event analysis for video %s", video_id
+                )
+                return analyze_full_audio_emotions(audio_path)
+            except Exception as e:
+                logger.warning("SenseVoice full analysis failed for video %s: %s", video_id, e)
+                return {}
+
+        def _run_prosody():
+            try:
+                logger.info("Extracting full audio prosody features for video %s", video_id)
+                return extract_full_audio_features(audio_path)
+            except Exception as e:
+                logger.warning("Full audio prosody extraction failed for video %s: %s", video_id, e)
+                return {}
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fut_diarize = executor.submit(_run_diarization)
+            fut_emotions = executor.submit(_run_emotions)
+            fut_prosody = executor.submit(_run_prosody)
+
+            diarization = fut_diarize.result()
+            full_emotions_events = fut_emotions.result()
+            prosody_features = fut_prosody.result()
+
+        segments = assign_speaker_scores(segments, diarization)
+        if not diarization:
             for seg in segments:
                 seg["speaker_confidence"] = 0.0
 
-        # Single-pass audio emotion & event analysis on the full audio track
-        logger.info("Running single-pass audio emotion & event analysis for video %s", video_id)
-        try:
-            full_emotions_events = analyze_full_audio_emotions(audio_path)
-            all_emotions = full_emotions_events.get("emotions", [])
-            all_events = full_emotions_events.get("events", [])
-        except Exception as e:
-            logger.warning("SenseVoice full analysis failed for video %s: %s", video_id, e)
-            all_emotions = []
-            all_events = []
-
-        # Single-pass full audio prosody feature extraction
-        logger.info("Extracting full audio prosody features for video %s", video_id)
-        try:
-            prosody_features = extract_full_audio_features(audio_path)
-        except Exception as e:
-            logger.warning("Full audio prosody extraction failed for video %s: %s", video_id, e)
-            prosody_features = {}
+        all_emotions = full_emotions_events.get("emotions", [])
+        all_events = full_emotions_events.get("events", [])
 
         # Map emotion + events + prosody per segment
         total = len(segments)
         last_broadcast = -1
-        last_progress = 0.0
         for idx, seg in enumerate(segments):
             seg_start = seg["start"]
             seg_end = seg["end"]
 
             # Map emotions and events that overlap with this segment
             seg_emotions = [
-                e for e in all_emotions
+                e
+                for e in all_emotions
                 if e.get("start", 0) < seg_end and e.get("end", 0) > seg_start
             ]
             seg_events = [
-                ev for ev in all_events
+                ev
+                for ev in all_events
                 if ev.get("start", 0) < seg_end and ev.get("end", 0) > seg_start
             ]
 
@@ -229,27 +261,52 @@ def run_scene_detect(self, video_id: str):
                 seg["audio_energy"] = 0.0
 
             # Recalculate viral score
-            seg["viral_score"] = _calculate_viral_score(seg)
+            seg["viral_score"] = calculate_viral_score(seg)
             seg["viral_score"] *= seg.get("trend_boost", 1.0)
 
             if job:
-                job_progress = (idx + 1) / max(total, 1)
-                delta = (job_progress - last_progress) * 0.6
-                last_progress = job_progress
-                from sqlalchemy import update, func
-                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
+                job_progress = min(0.99, (idx + 1) / max(total, 1) * 0.5 + 0.5)
+                from sqlalchemy import update
+
+                session.execute(update(Job).where(Job.id == job.id).values(progress=job_progress))
                 session.commit()
                 pct = int(job_progress * 100)
                 if pct > last_broadcast:
                     last_broadcast = pct
                     # Web UI expects progress 0 to 1 mapping from 0.5 to 1.0 for scene_detect
                     ws_progress = 0.5 + (0.5 * job_progress)
-                    broadcast_sync(video_id, "scene_detect", ws_progress, "running", f"Analyzed {idx + 1}/{total} segments")
+                    broadcast_sync(
+                        video_id,
+                        "scene_detect",
+                        ws_progress,
+                        "running",
+                        f"Analyzed {idx + 1}/{total} segments",
+                    )
 
+        video.segments = segments
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(video, "segments")
         session.commit()
 
         logger.info("Scene detection + audio analysis complete for video %s", video_id)
         broadcast_sync(video_id, "scene_detect", 1.0, "completed", f"Analyzed {total} segments")
+
+        from app.services.webhooks import fire_event_sync
+
+        fire_event_sync(
+            video_id,
+            "scene_detect.completed",
+            {
+                "status": "completed",
+                "segments_count": total,
+            },
+        )
+
+        # Trigger merge if NLP is also done
+        from app.workers.join_worker import check_and_merge
+
+        check_and_merge(video_id)
 
         return segments
 
@@ -259,15 +316,22 @@ def run_scene_detect(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
-            job = session.query(Job).filter(
-                and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
-            ).first()
+                video.transcript = {"error": f"Scene detection failed: {exc}"}
+            job = (
+                session.query(Job)
+                .filter(
+                    and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
+                )
+                .first()
+            )
             if job:
                 job.status = JobStatusEnum.FAILED
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()
         if audio_path and os.path.exists(audio_path):
@@ -275,4 +339,4 @@ def run_scene_detect(self, video_id: str):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         if tmpdir and os.path.exists(tmpdir):
-            os.rmdir(tmpdir)
+            shutil.rmtree(tmpdir, ignore_errors=True)

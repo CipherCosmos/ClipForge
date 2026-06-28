@@ -1,6 +1,7 @@
 """Translation service using Argos Translate (local, no API key)."""
 
 import logging
+import threading
 from functools import lru_cache
 
 logger = logging.getLogger(__name__)
@@ -39,18 +40,23 @@ SUPPORTED_LANGUAGES = {
 
 
 _argos_initialized = False
+_argos_lock = threading.Lock()
 
 
 def _ensure_argos_index():
     global _argos_initialized
     if _argos_initialized:
         return
-    try:
-        import argostranslate.package
-        argostranslate.package.update_package_index()
-        _argos_initialized = True
-    except Exception as exc:
-        logger.debug("Argos index update failed: %s", exc)
+    with _argos_lock:
+        if _argos_initialized:
+            return
+        try:
+            import argostranslate.package
+
+            argostranslate.package.update_package_index()
+            _argos_initialized = True
+        except Exception as exc:
+            logger.debug("Argos index update failed: %s", exc)
 
 
 @lru_cache(maxsize=32)
@@ -79,12 +85,8 @@ def _get_argos_model(lang_pair: str):
             None,
         )
         if package_to_install:
-            argostranslate.package.install_from_path(
-                package_to_install.download()
-            )
-        return argostranslate.translate.get_translation_from_codes(
-            from_code, to_code
-        )
+            argostranslate.package.install_from_path(package_to_install.download())
+        return argostranslate.translate.get_translation_from_codes(from_code, to_code)
     except ImportError:
         logger.debug("argostranslate not installed, translation unavailable")
     except Exception as exc:
@@ -92,37 +94,67 @@ def _get_argos_model(lang_pair: str):
     return None
 
 
-def translate_text(text: str, target_lang: str, source_lang: str = "en") -> str:
-    """Translate text from source_lang to target_lang."""
-    import sys
-    if "pytest" in sys.modules or "unittest" in sys.modules:
-        return _translate_text_uncached(text, target_lang, source_lang)
-    return _translate_text_cached(text, target_lang, source_lang)
+def _translate_via_llm(text: str, target_lang: str, source_lang: str) -> str | None:
+    """Translate text using LLM (Groq or local Ollama)."""
+    try:
+        from app.services.llm import generate_llm
 
-
-@lru_cache(maxsize=1024)
-def _translate_text_cached(text: str, target_lang: str, source_lang: str) -> str:
-    return _translate_text_uncached(text, target_lang, source_lang)
+        source_name = SUPPORTED_LANGUAGES.get(source_lang, source_lang)
+        target_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
+        prompt = (
+            f"Translate the following text from {source_name} to {target_name}. "
+            f"Return ONLY the translation, with no explanation, intro, or formatting:\n\n{text}"
+        )
+        res = generate_llm(prompt, timeout=15.0)
+        translated = res.get("response", "").strip()
+        if translated:
+            return translated
+    except Exception as exc:
+        logger.warning("LLM translation failed, falling back to Argos: %s", exc)
+    return None
 
 
 def _translate_text_uncached(text: str, target_lang: str, source_lang: str) -> str:
+    """Translate text from source_lang to target_lang."""
     if source_lang == target_lang:
         return text
-
     if target_lang not in SUPPORTED_LANGUAGES:
         logger.warning("Unsupported target language: %s", target_lang)
         return text
 
+    # Try MyMemory API first (extremely fast, free, no keys, high availability)
+    try:
+        import httpx
+
+        url = "https://api.mymemory.translated.net/get"
+        params = {"q": text, "langpair": f"{source_lang}|{target_lang}"}
+        resp = httpx.get(url, params=params, timeout=5.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            translated = data.get("responseData", {}).get("translatedText")
+            if translated and translated.strip() and translated != text:
+                logger.info("Translated via MyMemory API: '%s' -> '%s'", text[:50], translated[:50])
+                return translated
+    except Exception as exc:
+        logger.warning("MyMemory translation failed: %s", exc)
+
+    # Try LLM second (fast, high quality, zero setup)
+    llm_translated = _translate_via_llm(text, target_lang, source_lang)
+    if llm_translated:
+        return llm_translated
+
+    # Fallback to local Argos model
     lang_pair = f"{source_lang}-{target_lang}"
     model = _get_argos_model(lang_pair)
     if model is None:
-        logger.warning(
-            "Translation model unavailable for %s, returning original", lang_pair
-        )
+        logger.warning("Translation model unavailable for %s, returning original", lang_pair)
         return text
-
     try:
         return model.translate(text)
     except Exception as exc:
         logger.warning("Translation failed for %s: %s", lang_pair, exc)
         return text
+
+
+def translate_text(text: str, target_lang: str, source_lang: str = "en") -> str:
+    return _translate_text_uncached(text, target_lang, source_lang)

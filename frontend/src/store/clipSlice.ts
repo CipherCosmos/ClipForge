@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit"
+import { createSlice, createAsyncThunk } from "@reduxjs/toolkit"
 import { clipsAPI } from "@/lib/api"
 import type { RootState } from "./store"
 
@@ -52,14 +52,7 @@ export const fetchClips = createAsyncThunk(
 const clipSlice = createSlice({
   name: "clips",
   initialState,
-  reducers: {
-    setClips(state, action: PayloadAction<Clip[]>) {
-      state.clips = action.payload
-    },
-    setLoading(state, action: PayloadAction<boolean>) {
-      state.loading = action.payload
-    },
-  },
+  reducers: {},
   extraReducers: (builder) => {
     builder
       .addCase(fetchClips.pending, (s) => { s.loading = true })
@@ -68,5 +61,4 @@ const clipSlice = createSlice({
   },
 })
 
-export const { setClips, setLoading } = clipSlice.actions
 export default clipSlice.reducer

@@ -2,6 +2,8 @@
 
 import { useState } from "react"
 import { Link2, Sparkles, Loader2, AlertCircle } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 interface ImportUrlProps {
   onImport: (url: string) => void
@@ -39,14 +41,14 @@ export function ImportUrl({ onImport, busy }: ImportUrlProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="relative">
-        <Link2 size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-        <input
+        <Link2 size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Input
           type="url"
           placeholder="Paste YouTube or video URL..."
           value={url}
           onChange={(e) => { setUrl(e.target.value); setError("") }}
           disabled={busy}
-          className="input pl-10"
+          className="pl-10"
           autoFocus
         />
       </div>
@@ -56,10 +58,10 @@ export function ImportUrl({ onImport, busy }: ImportUrlProps) {
           <span>{error}</span>
         </div>
       )}
-      <button
+      <Button
         type="submit"
         disabled={busy || !url.trim()}
-        className="btn-primary w-full"
+        className="w-full"
       >
         {busy ? (
           <Loader2 size={16} className="animate-spin" />
@@ -67,7 +69,7 @@ export function ImportUrl({ onImport, busy }: ImportUrlProps) {
           <Sparkles size={16} />
         )}
         {busy ? "Importing..." : "Import & Analyze"}
-      </button>
+      </Button>
     </form>
   )
 }

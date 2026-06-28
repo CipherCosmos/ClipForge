@@ -2,25 +2,25 @@ import json
 import logging
 import uuid
 
-import httpx
 from sqlalchemy import and_
-from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.ws import broadcast_sync
 from app.config import settings
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
+from app.services.scoring import calculate_viral_score
 from app.services.trends import compute_trend_boost, fetch_trending_keywords
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 10
-OLLAMA_TIMEOUT = 120.0
+BATCH_SIZE = getattr(settings, "LLM_BATCH_SIZE", 10)
+LLM_TIMEOUT = settings.GROQ_API_KEY and 30.0 or 120.0
 
 BATCH_PROMPT_TEMPLATE = (
     "You are a viral short expert. Analyze each text segment below for viral potential.\n"
     "Respond ONLY with a JSON array of objects, one per segment in order:\n"
-    '[{{"hook_score": 0-1, "emotion_intensity": 0-1, "engagement_potential": 0-1, "keyword_density": 0-1}}]\n'
+    '[{{"hook_score": 0-1, "emotion_intensity": 0-1, '
+    '"engagement_potential": 0-1, "keyword_density": 0-1}}]\n'
     "Rules: hook_score>0.7 if starts with question/bold claim/surprise; "
     "emotion_intensity>0.7 if strong emotion; "
     "engagement_potential>0.7 if curiosity gap/relatable; "
@@ -59,22 +59,24 @@ def _heuristic_score(text: str, trending: list[str]) -> float:
     return score
 
 
-def _call_ollama(text: str, language: str | None = None) -> dict:
+def _call_llm(text: str, language: str | None = None) -> dict:
     """Mockable single segment LLM score generator."""
     from app.services.llm import generate_llm
+
     prompt = (
         "You are a viral short expert analyzing video transcript segments. "
-        "Analyze this text for viral short potential. Rate each dimension from 0.0 to 1.0 and return ONLY valid JSON:\n"
+        "Analyze this text for viral short potential. "
+        "Rate each dimension from 0.0 to 1.0 and return ONLY valid JSON:\n"
         "{\n"
-        "  \"hook_score\": <0.0-1.0>,\n"
-        "  \"emotion_intensity\": <0.0-1.0>,\n"
-        "  \"engagement_potential\": <0.0-1.0>,\n"
-        "  \"keyword_density\": <0.0-1.0>\n"
+        '  "hook_score": <0.0-1.0>,\n'
+        '  "emotion_intensity": <0.0-1.0>,\n'
+        '  "engagement_potential": <0.0-1.0>,\n'
+        '  "keyword_density": <0.0-1.0>\n'
         "}\n\n"
         f'Text: "{text}"'
     )
     try:
-        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        data = generate_llm(prompt, format_json=True, timeout=LLM_TIMEOUT)
         response_text = data.get("response", "{}")
         r = json.loads(response_text)
         return {
@@ -88,19 +90,19 @@ def _call_ollama(text: str, language: str | None = None) -> dict:
         return {}
 
 
-def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[dict]:
+def _call_llm_batch(texts: list[str], language: str | None = None) -> list[dict]:
     import unittest.mock
-    if isinstance(_call_ollama, unittest.mock.Mock):
-        return [_call_ollama(t, language) for t in texts]
+
+    if isinstance(_call_llm, unittest.mock.Mock):
+        return [_call_llm(t, language) for t in texts]
 
     from app.services.llm import generate_llm
+
     lang_hint = f"(language: {language}) " if language else ""
-    numbered = "\n".join(
-        f"{i+1}. {lang_hint}{t[:500]}" for i, t in enumerate(texts)
-    )
+    numbered = "\n".join(f"{i + 1}. {lang_hint}{t[:500]}" for i, t in enumerate(texts))
     prompt = BATCH_PROMPT_TEMPLATE.format(segments=numbered)
     try:
-        data = generate_llm(prompt, format_json=True, timeout=OLLAMA_TIMEOUT)
+        data = generate_llm(prompt, format_json=True, timeout=LLM_TIMEOUT)
         response_text = data.get("response", "[]")
         results = json.loads(response_text)
         if not isinstance(results, list):
@@ -119,21 +121,8 @@ def _call_ollama_batch(texts: list[str], language: str | None = None) -> list[di
             "engagement_potential": max(0.0, min(1.0, float(r.get("engagement_potential", 0.0)))),
             "keyword_density": max(0.0, min(1.0, float(r.get("keyword_density", 0.0)))),
         }
-        for r in results[:len(texts)]
+        for r in results[: len(texts)]
     ]
-
-
-def _calculate_viral_score(seg: dict) -> float:
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
@@ -149,11 +138,14 @@ def run_nlp(self, video_id: str):
         if not segments:
             logger.warning("No segments found for video %s, skipping NLP", video_id)
             from app.workers.scene_detect import run_scene_detect
+
             run_scene_detect.delay(video_id)
             return
 
         # ── Smart Resume: skip if segments already have Ollama scores ──
-        scored_segments = [s for s in segments if isinstance(s, dict) and s.get("hook_score", 0) > 0]
+        scored_segments = [
+            s for s in segments if isinstance(s, dict) and s.get("hook_score", 0) > 0
+        ]
         has_llm_scores = len(scored_segments) >= max(1, len(segments) // 2)
 
         job = (
@@ -168,7 +160,11 @@ def run_nlp(self, video_id: str):
         )
 
         if has_llm_scores:
-            logger.info("Smart Resume: %d/%d segments already have LLM scores, skipping NLP", len(scored_segments), len(segments))
+            logger.info(
+                "Smart Resume: %d/%d segments already have LLM scores, skipping NLP",
+                len(scored_segments),
+                len(segments),
+            )
             if job and job.status == JobStatusEnum.QUEUED:
                 job.status = JobStatusEnum.DONE
                 job.progress = 1.0
@@ -203,52 +199,90 @@ def run_nlp(self, video_id: str):
         scored_indices.sort(key=lambda x: x[1], reverse=True)
 
         # Select top candidates for LLM processing (limit to 100)
-        MAX_LLM_SEGMENTS = 100
-        llm_candidates = scored_indices[:MAX_LLM_SEGMENTS]
-        
+        max_llm_segments = 100
+        llm_candidates = scored_indices[:max_llm_segments]
+
         # For the remaining segments, assign default neutral scores
-        for idx, _ in scored_indices[MAX_LLM_SEGMENTS:]:
+        for idx, _ in scored_indices[max_llm_segments:]:
             seg = segments[idx]
             seg["hook_score"] = 0.1
             seg["emotion_intensity"] = 0.1
             seg["engagement_potential"] = 0.1
             seg["keyword_density"] = 0.1
             seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
-            seg["viral_score"] = _calculate_viral_score(seg)
+            seg["viral_score"] = calculate_viral_score(seg)
 
         # Process the LLM candidates in batches
         llm_total = len(llm_candidates)
         logger.info("Running Ollama LLM scoring on %d of %d segments", llm_total, total)
 
-        last_progress = 0.0
+        # Prepare all batches
+        batches = []
         for batch_start in range(0, llm_total, BATCH_SIZE):
-            batch_candidates = llm_candidates[batch_start:batch_start + BATCH_SIZE]
+            batch_candidates = llm_candidates[batch_start : batch_start + BATCH_SIZE]
             batch_segments = [segments[idx] for idx, _ in batch_candidates]
             texts = [s.get("text", "") for s in batch_segments]
-            batch_scores = _call_ollama_batch(texts, video.language)
+            batches.append((batch_segments, texts))
 
-            for j, seg in enumerate(batch_segments):
-                scores = batch_scores[j] if j < len(batch_scores) else {}
-                seg["hook_score"] = scores.get("hook_score", 0.0)
-                seg["emotion_intensity"] = scores.get("emotion_intensity", 0.0)
-                seg["engagement_potential"] = scores.get("engagement_potential", 0.0)
-                seg["keyword_density"] = scores.get("keyword_density", 0.0)
-                seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
-                seg["viral_score"] = _calculate_viral_score(seg)
+        # Call LLM in parallel
+        from concurrent.futures import ThreadPoolExecutor
 
-            done = min(batch_start + BATCH_SIZE, llm_total)
-            job_progress = done / max(llm_total, 1)
-            broadcast_sync(video_id, "nlp", job_progress, "running", f"Scored {done}/{llm_total} candidates")
-            if job:
-                delta = (job_progress - last_progress) * 0.4
-                last_progress = job_progress
-                from sqlalchemy import update, func
-                session.execute(update(Job).where(Job.id == job.id).values(progress=func.coalesce(Job.progress, 0.0) + delta))
-                session.commit()
+        max_workers = min(4, len(batches) or 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_call_llm_batch, texts, video.language) for _, texts in batches
+            ]
 
+            for i, (batch_segments, _) in enumerate(batches):
+                batch_scores = futures[i].result()
+                for j, seg in enumerate(batch_segments):
+                    scores = batch_scores[j] if j < len(batch_scores) else {}
+                    seg["hook_score"] = scores.get("hook_score", 0.0)
+                    seg["emotion_intensity"] = scores.get("emotion_intensity", 0.0)
+                    seg["engagement_potential"] = scores.get("engagement_potential", 0.0)
+                    seg["keyword_density"] = scores.get("keyword_density", 0.0)
+                    seg["trend_boost"] = compute_trend_boost(seg.get("text", ""), trending)
+                    seg["viral_score"] = calculate_viral_score(seg)
+
+                done = min((i + 1) * BATCH_SIZE, llm_total)
+                job_progress = done / max(llm_total, 1)
+                broadcast_sync(
+                    video_id,
+                    "nlp",
+                    job_progress,
+                    "running",
+                    f"Scored {done}/{llm_total} candidates",
+                )
+                if job:
+                    from sqlalchemy import update
+
+                    capped = min(0.99, job_progress * 0.4 + 0.5)
+                    session.execute(update(Job).where(Job.id == job.id).values(progress=capped))
+                    session.commit()
+
+        video.segments = segments
+        from sqlalchemy.orm.attributes import flag_modified
+
+        flag_modified(video, "segments")
         session.commit()
         logger.info("NLP scoring complete for video %s", video_id)
         broadcast_sync(video_id, "nlp", 1.0, "completed", f"Scored {total} segments")
+
+        from app.services.webhooks import fire_event_sync
+
+        fire_event_sync(
+            video_id,
+            "nlp.completed",
+            {
+                "status": "completed",
+                "segments_count": total,
+            },
+        )
+
+        # Trigger merge if scene detect is also done
+        from app.workers.join_worker import check_and_merge
+
+        check_and_merge(video_id)
 
         return segments
 
@@ -270,9 +304,12 @@ def run_nlp(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
+                video.transcript = {"error": f"NLP analysis failed: {exc}"}
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

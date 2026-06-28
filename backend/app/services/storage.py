@@ -1,9 +1,10 @@
-from io import BytesIO
-from typing import Optional, List
 import logging
-import time
 from datetime import timedelta
+from io import BytesIO
+from typing import List, Optional
+
 import httpx
+from cachetools import TTLCache
 from minio import Minio
 from minio.error import S3Error
 
@@ -13,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 _client: Optional[Minio] = None
 _supabase_http: Optional[httpx.Client] = None
-_presigned_cache: dict[str, tuple[str, float]] = {}
-_PRESIGNED_CACHE_TTL = 1800
+_presigned_cache: TTLCache = TTLCache(maxsize=1000, ttl=1800)
 
 
 def get_client() -> Minio:
@@ -64,8 +64,8 @@ def ensure_bucket() -> None:
                     "bucket",
                     json={"id": bucket, "name": bucket, "public": True},
                 )
-        except Exception as e:
-            logger.error("Failed to ensure Supabase bucket exists: %s", e)
+        except (httpx.HTTPError, ConnectionError, OSError) as e:
+            logger.warning("Failed to ensure Supabase bucket exists: %s", e)
     else:
         client = get_client()
         bucket = settings.MINIO_BUCKET
@@ -92,9 +92,7 @@ def upload_file(file_path: str, object_name: str) -> str:
             headers={"Content-Type": content_type},
         )
         if resp.status_code != 200:
-            raise RuntimeError(
-                f"Failed to upload to Supabase: {resp.status_code} - {resp.text}"
-            )
+            raise RuntimeError(f"Failed to upload to Supabase: {resp.status_code} - {resp.text}")
         return object_name
     else:
         client = get_client()
@@ -133,10 +131,9 @@ def upload_bytes(
 
 
 def get_presigned_url(object_name: str, expires: int = 3600) -> str:
-    now = time.time()
     cached = _presigned_cache.get(object_name)
-    if cached and (now - cached[1]) < _PRESIGNED_CACHE_TTL:
-        return cached[0]
+    if cached:
+        return cached
 
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
@@ -149,12 +146,12 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
             if resp.status_code == 200:
                 data = resp.json()
                 from urllib.parse import urlparse
+
                 parsed = urlparse(settings.SUPABASE_STORAGE_URL)
                 url = f"{parsed.scheme}://{parsed.netloc}{data['signedURL']}"
-                _presigned_cache[object_name] = (url, now)
+                _presigned_cache[object_name] = url
                 return url
             if attempt < 2 and resp.status_code in (404, 429):
-                time.sleep(0.5 * (attempt + 1))
                 continue
             break
         logger.warning("Failed to sign URL on Supabase: %s", resp.text)
@@ -165,16 +162,14 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
             settings.MINIO_BUCKET, object_name, expires=timedelta(seconds=expires)
         )
 
-    _presigned_cache[object_name] = (url, now)
+    _presigned_cache[object_name] = url
     return url
 
 
 def get_presigned_upload_url(object_name: str, expires: int = 3600) -> str:
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
-        resp = _supabase_request(
-            "POST", f"object/upload/sign/{bucket}/{object_name}"
-        )
+        resp = _supabase_request("POST", f"object/upload/sign/{bucket}/{object_name}")
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to get upload URL: {resp.text}")
         data = resp.json()
@@ -204,9 +199,7 @@ def delete_file(object_name: str) -> None:
 def list_files(prefix: str) -> List[str]:
     if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
         bucket = settings.MINIO_BUCKET
-        resp = _supabase_request(
-            "POST", f"object/list/{bucket}", json={"prefix": prefix}
-        )
+        resp = _supabase_request("POST", f"object/list/{bucket}", json={"prefix": prefix})
         if resp.status_code == 200:
             return [f"{prefix}{item['name']}" for item in resp.json()]
         return []
@@ -224,15 +217,11 @@ def delete_prefix(prefix: str) -> None:
         bucket = settings.MINIO_BUCKET
         files = list_files(prefix)
         if files:
-            _supabase_request(
-                "DELETE", f"object/{bucket}", json={"prefixes": files}
-            )
+            _supabase_request("DELETE", f"object/{bucket}", json={"prefixes": files})
     else:
         client = get_client()
         try:
-            objects = client.list_objects(
-                settings.MINIO_BUCKET, prefix=prefix, recursive=True
-            )
+            objects = client.list_objects(settings.MINIO_BUCKET, prefix=prefix, recursive=True)
             for obj in objects:
                 client.remove_object(settings.MINIO_BUCKET, obj.object_name)
         except S3Error:
@@ -252,3 +241,54 @@ def download_file(object_name: str, file_path: str) -> None:
     else:
         client = get_client()
         client.fget_object(settings.MINIO_BUCKET, object_name, file_path)
+
+
+def copy_file(src_object_name: str, dest_object_name: str) -> None:
+    """Perform a server-side copy of an object from source to destination."""
+    if settings.SUPABASE_STORAGE_URL and settings.SUPABASE_SERVICE_ROLE_KEY:
+        bucket = settings.MINIO_BUCKET
+        resp = _supabase_request(
+            "POST",
+            "object/copy",
+            json={
+                "bucketId": bucket,
+                "sourceKey": src_object_name,
+                "destinationKey": dest_object_name,
+            },
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "Failed to copy file in Supabase: %s -> %s (code: %s, body: %s)",
+                src_object_name,
+                dest_object_name,
+                resp.status_code,
+                resp.text,
+            )
+    else:
+        client = get_client()
+        from minio.common import CopySource
+
+        bucket = settings.MINIO_BUCKET
+        try:
+            client.copy_object(
+                bucket,
+                dest_object_name,
+                CopySource(bucket, src_object_name),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to copy file in MinIO: %s -> %s (%s)",
+                src_object_name,
+                dest_object_name,
+                e,
+            )
+
+
+def copy_prefix(src_prefix: str, dest_prefix: str) -> None:
+    """Copy all objects matching the source prefix to the destination prefix."""
+    files = list_files(src_prefix)
+    for src_file in files:
+        if src_file.startswith(src_prefix):
+            relative_path = src_file[len(src_prefix) :]
+            dest_file = f"{dest_prefix}{relative_path}"
+            copy_file(src_file, dest_file)

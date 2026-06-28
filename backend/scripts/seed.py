@@ -1,6 +1,5 @@
 """Seed test user for local development."""
 
-import os
 import sys
 import uuid
 from datetime import datetime, timezone

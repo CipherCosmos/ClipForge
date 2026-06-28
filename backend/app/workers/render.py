@@ -5,20 +5,21 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
-import httpx
 from sqlalchemy import and_
 
 from app.api.ws import broadcast_sync
-from app.config import settings
-from app.models import Clip, Job, JobStatusEnum, JobTypeEnum, Video, VideoStatusEnum
+from app.models import Job, JobStatusEnum, JobTypeEnum, User, Video, VideoStatusEnum
+from app.services.branding import BrandConfig, build_watermark_filter, generate_title_card
 from app.services.ducking import build_duck_filter
 from app.services.moderation import moderate_segment
 from app.services.platforms import get_preset
-from app.services.storage import download_file, ensure_bucket, upload_file, get_presigned_url
+from app.services.storage import download_file, ensure_bucket, get_presigned_url, upload_file
+from app.services.video import get_media_duration
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
@@ -27,22 +28,49 @@ MAX_CLIPS = 10
 MIN_CLIP_DURATION = 2.0
 MAX_CLIP_DURATION = 60.0
 
-_FACE_CASCADE = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-)
-_PROFILE_CASCADE = cv2.CascadeClassifier(
-    cv2.data.haarcascades + "haarcascade_profileface.xml"
-)
+_cascade_lock = threading.Lock()
+_FACE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+_PROFILE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_profileface.xml")
 
 _DRAWTEXT_AVAILABLE: bool | None = None
+_FONT_PATH: str | None = None
+
+
+def _get_font_path() -> str:
+    global _FONT_PATH
+    if _FONT_PATH is not None:
+        return _FONT_PATH
+    """Find the DejaVu Sans or Arial font path for the current OS."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+        os.path.expanduser("~/Library/Fonts/DejaVuSans.ttf"),  # macOS (homebrew)
+        "/Library/Fonts/DejaVuSans.ttf",  # macOS (system)
+        "/System/Library/Fonts/Supplemental/DejaVuSans.ttf",  # macOS (supplemental)
+        "/System/Library/Fonts/Supplemental/Arial.ttf",  # macOS (supplemental Arial)
+        "/opt/homebrew/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # macOS (brew)
+        "C:\\Windows\\Fonts\\Arial.ttf",  # Windows
+        "C:\\Windows\\Fonts\\DejaVuSans.ttf",  # Windows
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            _FONT_PATH = path
+            return path
+    _FONT_PATH = ""
+    return ""
+
+
+def _fontfile_arg() -> str:
+    """Return ':fontfile=<path>' if a font is found, else empty string."""
+    path = _get_font_path()
+    return f":fontfile='{path}'" if path else ""
+
+
 def _has_drawtext() -> bool:
     global _DRAWTEXT_AVAILABLE
     if _DRAWTEXT_AVAILABLE is not None:
         return _DRAWTEXT_AVAILABLE
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-filters"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["ffmpeg", "-filters"], capture_output=True, text=True, timeout=10)
         _DRAWTEXT_AVAILABLE = "drawtext" in result.stdout
     except Exception:
         _DRAWTEXT_AVAILABLE = False
@@ -52,6 +80,8 @@ def _has_drawtext() -> bool:
 
 
 _VIDEOTOOLBOX_AVAILABLE: bool | None = None
+
+
 def _use_videotoolbox() -> bool:
     global _VIDEOTOOLBOX_AVAILABLE
     if _VIDEOTOOLBOX_AVAILABLE is not None:
@@ -60,9 +90,7 @@ def _use_videotoolbox() -> bool:
         _VIDEOTOOLBOX_AVAILABLE = False
         return False
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=10)
         _VIDEOTOOLBOX_AVAILABLE = "h264_videotoolbox" in result.stdout
     except Exception:
         _VIDEOTOOLBOX_AVAILABLE = False
@@ -70,37 +98,82 @@ def _use_videotoolbox() -> bool:
         logger.info("macOS h264_videotoolbox hardware encoder detected and enabled")
     return _VIDEOTOOLBOX_AVAILABLE
 
+
 METADATA_PROMPT_TEMPLATE = (
-    'Act as an expert social media manager. Generate highly engaging, viral metadata for this clip transcript.\n'
-    'Return ONLY valid JSON:\n'
-    '{{\n'
+    "Act as an expert social media manager. "
+    "Generate highly engaging, viral metadata for this clip transcript.\n"
+    "Return ONLY valid JSON:\n"
+    "{{\n"
     '  "title": "<clickbait but accurate 30-char title>",\n'
-    '  "caption": "<A detailed 2-3 sentence engaging description with emojis, asking a question to drive comments, and a strong call-to-action>",\n'
+    '  "caption": "<A detailed 2-3 sentence engaging description with emojis, '
+    'asking a question to drive comments, and a strong call-to-action>",\n'
     '  "hashtags": "#viral #trending #<topic1> #<topic2> #<topic3>"\n'
-    '}}\n\n'
+    "}}\n\n"
     'Transcript: "{text}"'
 )
 
 BATCH_METADATA_PROMPT_TEMPLATE = (
-    'Act as an expert social media manager. Generate highly engaging, viral metadata for each of the clip transcripts below.\n'
-    'Return ONLY a valid JSON array with one object per clip, maintaining the exact same order.\n\n'
-    'Format each object strictly like this:\n'
-    '[{{"hook": "<punchy on-screen hook, max 60 chars>", "title": "<clickbait but accurate 30-char title>", '
-    '"caption": "<A detailed 2-3 sentence engaging description with emojis, asking a question to drive comments, and a strong call-to-action>", '
+    "Act as an expert social media manager. "
+    "Generate highly engaging, viral metadata for each of the clip transcripts below.\n"
+    "Return ONLY a valid JSON array with one object per clip, maintaining the exact same order.\n\n"
+    "Format each object strictly like this:\n"
+    '[{{"hook": "<punchy on-screen hook, max 60 chars>", '
+    '"title": "<clickbait but accurate 30-char title>", '
+    '"caption": "<A detailed 2-3 sentence engaging description with emojis, '
+    'asking a question to drive comments, and a strong call-to-action>", '
     '"hashtags": "#viral #trending #<topic1> #<topic2> #<topic3>"}}]\n\n'
-    'Clips:\n{clips}'
+    "Clips:\n{clips}"
 )
 
 
-def _score_candidate_window(segments: list[dict], i: int, j: int, duration: float, avg_score: float) -> float:
+def _score_candidate_window(
+    segments: list[dict], i: int, j: int, duration: float, avg_score: float
+) -> float:
     # 1. Apply Duration Bias (Peak at 60s / 1min)
     duration_diff = abs(duration - 60.0)
-    duration_mult = 1.0 - 0.25 * (duration_diff / 30.0) # drops to 0.875 at 45s and 0.75 at 90s
+    duration_mult = 1.0 - 0.25 * (duration_diff / 30.0)  # drops to 0.875 at 45s and 0.75 at 90s
 
     # 2. Coherence and Punctuation/Pause heuristics
-    transition_words = {"hey", "hello", "today", "now", "so", "why", "how", "what", "did", "do", "you", "if", "when", "this", "there", "here"}
+    transition_words = {
+        "hey",
+        "hello",
+        "today",
+        "now",
+        "so",
+        "why",
+        "how",
+        "what",
+        "did",
+        "do",
+        "you",
+        "if",
+        "when",
+        "this",
+        "there",
+        "here",
+    }
     conjunctions = {"and", "but", "because", "or", "so that"}
-    incomplete_ends = {"the", "a", "an", "and", "but", "because", "of", "with", "is", "are", "was", "were", "has", "have", "to", "in", "on", "at", "for"}
+    incomplete_ends = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "but",
+        "because",
+        "of",
+        "with",
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+    }
 
     start_score = 0.5
     end_score = 0.5
@@ -112,11 +185,11 @@ def _score_candidate_window(segments: list[dict], i: int, j: int, duration: floa
     if i == 0:
         start_score = 1.0
     else:
-        prev_text = segments[i-1].get("text", "").strip()
+        prev_text = segments[i - 1].get("text", "").strip()
         if prev_text and prev_text[-1] in (".", "?", "!"):
             start_score = 1.0
         else:
-            pause = segments[i].get("start", 0) - segments[i-1].get("end", 0)
+            pause = segments[i].get("start", 0) - segments[i - 1].get("end", 0)
             if pause >= 0.4:
                 start_score = 0.9
             elif start_text and start_text[0].isupper() and start_text[0].isalpha():
@@ -136,7 +209,7 @@ def _score_candidate_window(segments: list[dict], i: int, j: int, duration: floa
         if end_text and end_text[-1] in (".", "?", "!"):
             end_score = 1.0
         else:
-            next_seg = segments[j+1]
+            next_seg = segments[j + 1]
             pause = next_seg.get("start", 0) - segments[j].get("end", 0)
             if pause >= 0.4:
                 end_score = 0.9
@@ -151,211 +224,186 @@ def _score_candidate_window(segments: list[dict], i: int, j: int, duration: floa
     return avg_score * duration_mult * coherence_mult
 
 
-def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
-    """Identify the best 45 to 90 second clips by grouping consecutive segments.
-    Prefers clips close to 60 seconds and starting/ending cleanly at sentence boundaries.
-    Uses sliding window + Non-Maximum Suppression (NMS) to avoid overlapping clips.
-    """
-    if not segments:
-        return []
-
-    # Fallback to sorting raw segments if timing keys are missing (e.g. in unit tests)
-    if not all("start" in s and "end" in s for s in segments):
-        scored = [s for s in segments if s.get("viral_score", 0) > 0]
-        scored.sort(key=lambda s: s["viral_score"], reverse=True)
-        return scored[:n]
-
+def _generate_windows(segments: list[dict], min_dur: float, max_dur: float = 90.0) -> list[dict]:
+    """Generate candidate clip windows from consecutive segments in [min_dur, max_dur] range."""
     candidates = []
-    
-    # 1. Generate all consecutive segment windows that are between 45s and 90s (primary range)
     for i in range(len(segments)):
         for j in range(i, len(segments)):
             start_time = segments[i]["start"]
             end_time = segments[j]["end"]
             duration = end_time - start_time
-            
-            if 45.0 <= duration <= 90.0:
-                # Calculate average viral score for the segments in this window
-                window_segs = segments[i:j+1]
+
+            if min_dur <= duration <= max_dur:
+                window_segs = segments[i : j + 1]
                 avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                
-                # Apply boundary coherence and duration multiplier
                 final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                
-                joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                
-                candidates.append({
-                    "start": start_time,
-                    "end": end_time,
-                    "text": joined_text,
-                    "viral_score": final_score,
-                    "segment_indices": set(range(i, j+1))
-                })
-            elif duration > 90.0:
+                joined_text = " ".join(
+                    s.get("text", "").strip() for s in window_segs if s.get("text")
+                )
+                candidates.append(
+                    {
+                        "start": start_time,
+                        "end": end_time,
+                        "text": joined_text,
+                        "viral_score": final_score,
+                        "segment_indices": set(range(i, j + 1)),
+                    }
+                )
+            elif duration > max_dur:
                 break
+    return candidates
 
-    # If no candidate windows fall in the 45s-90s range, fallback to 30s-90s
-    if not candidates:
-        logger.warning("No multi-segment windows of 45s-90s found, falling back to 30s-90s.")
-        for i in range(len(segments)):
-            for j in range(i, len(segments)):
-                start_time = segments[i]["start"]
-                end_time = segments[j]["end"]
-                duration = end_time - start_time
-                
-                if 30.0 <= duration <= 90.0:
-                    window_segs = segments[i:j+1]
-                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                    candidates.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "text": joined_text,
-                        "viral_score": final_score,
-                        "segment_indices": set(range(i, j+1))
-                    })
-                elif duration > 90.0:
-                    break
 
-    # If still no candidate windows, fallback to 15s-90s
-    if not candidates:
-        logger.warning("No multi-segment windows of 30s-90s found, falling back to 15s-90s.")
-        for i in range(len(segments)):
-            for j in range(i, len(segments)):
-                start_time = segments[i]["start"]
-                end_time = segments[j]["end"]
-                duration = end_time - start_time
-                
-                if 15.0 <= duration <= 90.0:
-                    window_segs = segments[i:j+1]
-                    avg_score = sum(s.get("viral_score", 0.0) for s in window_segs) / len(window_segs)
-                    final_score = _score_candidate_window(segments, i, j, duration, avg_score)
-                    joined_text = " ".join(s.get("text", "").strip() for s in window_segs if s.get("text"))
-                    candidates.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "text": joined_text,
-                        "viral_score": final_score,
-                        "segment_indices": set(range(i, j+1))
-                    })
-                elif duration > 90.0:
-                    break
+def _top_non_overlapping(candidates: list[dict], n: int) -> list[dict]:
+    """Select top-N non-overlapping candidates via greedy NMS with overlap relaxation."""
+    candidates.sort(key=lambda c: c["viral_score"], reverse=True)
 
-    # If still no candidates, fallback to raw segments
-    if not candidates:
-        logger.warning("No multi-segment windows found, falling back to raw segments.")
+    selected = []
+    used = set()
+
+    for cand in candidates:
+        if len(selected) >= n:
+            break
+        if not cand["segment_indices"].intersection(used):
+            selected.append(cand)
+            used.update(cand["segment_indices"])
+
+    # Relaxation pass — allow up to 30% overlap
+    if len(selected) < n:
+        for cand in candidates:
+            if len(selected) >= n:
+                break
+            if cand in selected:
+                continue
+            overlap = len(cand["segment_indices"].intersection(used)) / max(
+                len(cand["segment_indices"]), 1
+            )
+            if overlap <= 0.3:
+                selected.append(cand)
+                used.update(cand["segment_indices"])
+
+    # Fill remaining with whatever's left
+    for cand in candidates:
+        if len(selected) >= n:
+            break
+        if cand not in selected:
+            selected.append(cand)
+
+    selected.sort(key=lambda c: c["start"])
+    for clip in selected:
+        clip.pop("segment_indices", None)
+    return selected
+
+
+def _get_top_segments(segments: list[dict], n: int = MAX_CLIPS) -> list[dict]:
+    """Identify the best 45-90 second clips by grouping consecutive segments.
+    Falls back through progressively shorter windows, then raw segments.
+    """
+    if not segments:
+        return []
+
+    if not all("start" in s and "end" in s for s in segments):
         scored = [s for s in segments if s.get("viral_score", 0) > 0]
         scored.sort(key=lambda s: s["viral_score"], reverse=True)
         return scored[:n]
 
-    # 2. Sort candidates by score descending
-    candidates.sort(key=lambda c: c["viral_score"], reverse=True)
+    for min_dur in (45.0, 30.0, 15.0):
+        candidates = _generate_windows(segments, min_dur)
+        if candidates:
+            return _top_non_overlapping(candidates, n)
 
-    # 3. Perform Non-Maximum Suppression (NMS) to select non-overlapping clips
-    selected_clips = []
-    used_segments = set()
-
-    for cand in candidates:
-        if len(selected_clips) >= n:
-            break
-            
-        if not cand["segment_indices"].intersection(used_segments):
-            selected_clips.append(cand)
-            used_segments.update(cand["segment_indices"])
-
-    # If we didn't find enough completely non-overlapping clips, relax the constraint
-    if len(selected_clips) < n:
-        for cand in candidates:
-            if len(selected_clips) >= n:
-                break
-            if cand in selected_clips:
-                continue
-            intersection_size = len(cand["segment_indices"].intersection(used_segments))
-            if intersection_size / len(cand["segment_indices"]) <= 0.3:
-                selected_clips.append(cand)
-                used_segments.update(cand["segment_indices"])
-
-    # Fill remaining slots if any
-    if len(selected_clips) < n:
-        for cand in candidates:
-            if len(selected_clips) >= n:
-                break
-            if any(c["start"] == cand["start"] and c["end"] == cand["end"] for c in selected_clips):
-                continue
-            selected_clips.append(cand)
-
-    # Sort selected clips chronological order so they render in order
-    selected_clips.sort(key=lambda c: c["start"])
-
-    # Remove temporary helper keys
-    for clip in selected_clips:
-        clip.pop("segment_indices", None)
-
-    return selected_clips
+    logger.warning("No multi-segment windows found, falling back to raw segments.")
+    scored = [s for s in segments if s.get("viral_score", 0) > 0]
+    scored.sort(key=lambda s: s["viral_score"], reverse=True)
+    return scored[:n]
 
 
-
-def _detect_stable_face_center(video_path: str, start_time: float, duration: float) -> tuple[int, int]:
+def _detect_stable_face_center(
+    video_path: str, start_time: float, duration: float
+) -> tuple[int, int]:
     """Sample multiple frames across the clip duration to find a stable face center."""
     try:
         import numpy as np
+
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             return None
         iw = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         ih = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
-        # Sample up to 15 frames spaced evenly across the clip
-        num_samples = 15
-        sample_times = [start_time + (i * duration / max(1, num_samples - 1)) for i in range(num_samples)]
-        
+
+        # Sample up to 5 frames spaced evenly across the clip (fast seek)
+        num_samples = 5
+        sample_times = [
+            start_time + (i * duration / max(1, num_samples - 1)) for i in range(num_samples)
+        ]
+
         detected_centers = []
-        
+
         for t in sample_times:
             cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000)
             ret, frame = cap.read()
             if not ret or frame is None:
                 continue
-            
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # 1. Try frontal face
-            faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 3)
-            
+
+            # 1. Try frontal face (using minNeighbors=5 and lock for thread safety)
+            with _cascade_lock:
+                faces = _FACE_CASCADE.detectMultiScale(gray, 1.1, 5)
+            # Filter out tiny faces (likely background false positives)
+            faces = [f for f in faces if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih]
+
             # 2. Try profile face (facing right)
             if len(faces) == 0:
-                faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 3)
-                
+                with _cascade_lock:
+                    faces = _PROFILE_CASCADE.detectMultiScale(gray, 1.1, 5)
+                faces = [f for f in faces if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih]
+
             # 3. Try profile face flipped (facing left)
             if len(faces) == 0:
                 flipped = cv2.flip(gray, 1)
-                faces_flipped = _PROFILE_CASCADE.detectMultiScale(flipped, 1.1, 3)
+                with _cascade_lock:
+                    faces_flipped = _PROFILE_CASCADE.detectMultiScale(flipped, 1.1, 5)
+                faces_flipped = [
+                    f for f in faces_flipped if f[2] >= 0.05 * iw and f[3] >= 0.05 * ih
+                ]
                 if len(faces_flipped) > 0:
                     largest_face = max(faces_flipped, key=lambda f: f[2] * f[3])
                     xf, yf, wf, hf = largest_face
                     # Map x back to original coordinate space
                     faces = [(iw - xf - wf, yf, wf, hf)]
-            
+
             if len(faces) > 0:
                 # Find the largest face detected
                 largest_face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = largest_face
                 detected_centers.append((x + w // 2, y + h // 2))
-                
+
         cap.release()
-        
+
         if detected_centers:
             cxs = [c[0] for c in detected_centers]
             cys = [c[1] for c in detected_centers]
             cx = int(np.median(cxs))
             cy = int(np.median(cys))
-            logger.info("Face detection successful: detected %d/%d frames. Stable center: (%d, %d) in %dx%d video", 
-                        len(detected_centers), num_samples, cx, cy, iw, ih)
+            logger.info(
+                "Face detection successful: detected %d/%d frames. "
+                "Stable center: (%d, %d) in %dx%d video",
+                len(detected_centers),
+                num_samples,
+                cx,
+                cy,
+                iw,
+                ih,
+            )
             return cx, cy
-            
-        logger.info("No faces detected in %d frames. Falling back to video center: (%d, %d)", 
-                    num_samples, iw // 2, ih // 2)
+
+        logger.info(
+            "No faces detected in %d frames. Falling back to video center: (%d, %d)",
+            num_samples,
+            iw // 2,
+            ih // 2,
+        )
         return iw // 2, ih // 2
     except Exception as e:
         logger.warning("Stable face detection failed, using center fallback: %s", e)
@@ -372,8 +420,11 @@ def _detect_stable_face_center(video_path: str, start_time: float, duration: flo
 
 
 def _get_crop_filter(
-    video_path: str, start_time: float, duration: float,
-    preset_w: int = 1080, preset_h: int = 1920,
+    video_path: str,
+    start_time: float,
+    duration: float,
+    preset_w: int = 1080,
+    preset_h: int = 1920,
 ) -> str | None:
     """Generate crop filter string based on stable face detection and zoom focus."""
     cap = cv2.VideoCapture(video_path)
@@ -386,14 +437,21 @@ def _get_crop_filter(
     if iw <= 0 or ih <= 0:
         return None
 
+    # Skip face cropping for vertical videos to prevent bad framing and resolution loss
+    if iw < ih:
+        return (
+            f"scale='min({preset_w},iw)':'min({preset_h},ih)':force_original_aspect_ratio=decrease,"
+            f"pad={preset_w}:{preset_h}:(ow-iw)/2:(oh-ih)/2"
+        )
+
     # Detect stable face center (falls back to frame center)
     cx, cy = _detect_stable_face_center(video_path, start_time, duration)
 
-    # Apply 1.3x zoom factor to focus/zoom on the subject/speaker
-    zoom_factor = 1.3
+    # Use 1.0x zoom factor to avoid tight cropping that puts subject out of frame
+    zoom_factor = 1.0
     crop_h = int(ih / zoom_factor)
     crop_w = int(crop_h * preset_w / preset_h)
-    
+
     if crop_w > iw:
         crop_w = iw
         crop_h = int(iw * preset_h / preset_w)
@@ -414,10 +472,10 @@ def _get_crop_filter(
     return f"crop={crop_w}:{crop_h}:{left}:{top},scale={preset_w}:{preset_h}"
 
 
-
 def _generate_hook_text(text: str) -> str:
     """Generate a punchy hook text from segment content using Ollama."""
     from app.services.llm import generate_llm
+
     prompt = (
         "Generate a short, punchy hook text (max 60 chars) for a viral short clip. "
         "Make it attention-grabbing. Return ONLY the text, no quotes. "
@@ -425,7 +483,7 @@ def _generate_hook_text(text: str) -> str:
     )
     try:
         data = generate_llm(prompt, format_json=False, timeout=15.0)
-        hook = data.get("response", "").strip().strip('"\'')
+        hook = data.get("response", "").strip().strip("\"'")
         if hook:
             return hook[:80]
     except Exception as exc:
@@ -440,33 +498,27 @@ def _build_hook_overlay_filter(hook_text: str, duration: float) -> str | None:
     if not hook_text or duration < 3:
         return None
     text = hook_text.strip()[:80]
-    for ch in (":", "'", "%", "[", "]", "{", "}"):
+    for ch in (":", "'", ",", "%", "[", "]", "{", "}"):
         text = text.replace(ch, f"\\{ch}")
     return (
         f"drawtext=text='{text}':"
         f"fontsize=52:fontcolor=white:borderw=2:bordercolor=black:"
         f"x=(w-text_w)/2:y=h/3:"
         f"alpha='if(lt(t,0.5),t/0.5,if(gt(t,3),(4-t)/1,1))':"
-        f"enable='between(t,0,3)':"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        f"enable='between(t,0,3)'"
+        f"{_fontfile_arg()}"
     )
 
 
-def _build_subtitle_filter(caption: str) -> str | None:
-    """Build FFmpeg drawtext filter for auto-captions."""
+def _build_subtitle_filter(caption: str, style: str = "classic") -> list[str]:
+    """Build FFmpeg drawtext filter for auto-captions with the given visual style."""
     if not _has_drawtext():
-        return None
+        return []
     if not caption or not caption.strip():
-        return None
-    text = caption.strip()[:120]
-    text = text.replace(":", "\\:").replace("'", "\\'")
-    return (
-        f"drawtext=text='{text}':"
-        f"fontsize=36:fontcolor=white:"
-        f"box=1:boxcolor=black@0.5:boxborderw=10:"
-        f"x=(w-text_w)/2:y=h-th-60:"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    )
+        return []
+    from app.services.branding import build_caption_style_filter
+
+    return build_caption_style_filter(caption.strip()[:120], style)
 
 
 def _extract_frame(video_path: str, timestamp: float) -> str | None:
@@ -556,12 +608,18 @@ def _render_clip(
     caption: str = "",
     preset: object | None = None,
     hook_text: str = "",
+    watermark_filters: list[str] | None = None,
+    caption_style: str = "classic",
 ) -> None:
     if preset is None:
         from app.services.platforms import PlatformPreset
+
         preset = PlatformPreset(
-            name="youtube_shorts", label="YouTube Shorts",
-            width=1080, height=1920, max_duration=60.0,
+            name="youtube_shorts",
+            label="YouTube Shorts",
+            width=1080,
+            height=1920,
+            max_duration=60.0,
         )
     duration = end_time - start_time
     if duration < MIN_CLIP_DURATION:
@@ -595,18 +653,21 @@ def _render_clip(
             f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2"
         )
 
-    subtitle_filter = _build_subtitle_filter(caption)
-    if subtitle_filter:
-        filters.append(subtitle_filter)
+    subtitle_filters = _build_subtitle_filter(caption, caption_style)
+    if subtitle_filters:
+        filters.extend(subtitle_filters)
 
     if not hook_text:
         hook_text = _generate_hook_text(caption)
     hook_filter = _build_hook_overlay_filter(hook_text, duration)
     if hook_filter:
-        if subtitle_filter:
+        if subtitle_filters:
             filters.insert(-1, hook_filter)
         else:
             filters.append(hook_filter)
+
+    if watermark_filters:
+        filters.extend(watermark_filters)
 
     vf_str = ",".join(filters)
 
@@ -618,40 +679,59 @@ def _render_clip(
     clip_duration = end_time - start_time
     if _use_videotoolbox():
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start_time),
-            "-i", input_path,
-            "-t", str(clip_duration),
-            "-c:v", "h264_videotoolbox",
-            "-b:v", "8M",
-            "-c:a", "aac",
-            "-b:a", "192k",
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start_time),
+            "-i",
+            input_path,
+            "-t",
+            str(clip_duration),
+            "-c:v",
+            "h264_videotoolbox",
+            "-b:v",
+            "8M",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
         ]
     else:
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", str(start_time),
-            "-i", input_path,
-            "-t", str(clip_duration),
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "192k",
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start_time),
+            "-i",
+            input_path,
+            "-t",
+            str(clip_duration),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
         ]
     if duck_filter:
         cmd.extend(["-af", duck_filter])
-    cmd.extend([
-        "-vf", vf_str,
-        "-movflags", "+faststart",
-        output_path,
-    ])
+    cmd.extend(
+        [
+            "-vf",
+            vf_str,
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+    )
     logger.debug("Running FFmpeg: %s", " ".join(cmd))
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        raise RuntimeError(
-            f"FFmpeg failed (rc={result.returncode}): {result.stderr[:500]}"
-        )
+        raise RuntimeError(f"FFmpeg failed (rc={result.returncode}): {result.stderr[:500]}")
     if not os.path.exists(output_path):
         raise RuntimeError(f"FFmpeg did not produce output: {output_path}")
     logger.info("Rendered clip: %s (%.2f-%.2f)", output_path, start_time, end_time)
@@ -670,6 +750,7 @@ def _upload_clip(
 
 def _generate_clip_metadata(text: str) -> dict:
     from app.services.llm import generate_llm
+
     prompt = METADATA_PROMPT_TEMPLATE.format(text=text[:500])
     try:
         data = generate_llm(prompt, format_json=True, timeout=30.0)
@@ -677,8 +758,14 @@ def _generate_clip_metadata(text: str) -> dict:
         title_val = str(meta.get("title") or "")
         caption_val = str(meta.get("caption") or "")
         hashtags_raw = meta.get("hashtags") or ""
-        hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
-        hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+        hashtags_val = (
+            " ".join(str(h) for h in hashtags_raw)
+            if isinstance(hashtags_raw, list)
+            else str(hashtags_raw)
+        )
+        hashtags_val = (
+            hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+        )
         return {
             "title": title_val[:100] if title_val else "",
             "caption": caption_val[:500] if caption_val else text[:500],
@@ -699,14 +786,19 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
         return []
 
     from app.services.llm import generate_llm
-    numbered = "\n".join(
-        f"{i+1}. {seg.get('text', '')[:300]}" for i, seg in enumerate(segments)
-    )
+
+    numbered = "\n".join(f"{i + 1}. {seg.get('text', '')[:300]}" for i, seg in enumerate(segments))
     prompt = BATCH_METADATA_PROMPT_TEMPLATE.format(clips=numbered)
     try:
         data = generate_llm(prompt, format_json=True, timeout=60.0)
         response_text = data.get("response", "[]")
         results = json.loads(response_text)
+        if isinstance(results, dict):
+            # If the LLM wrapped the array in an object (e.g. {"clips": [...]})
+            for val in results.values():
+                if isinstance(val, list):
+                    results = val
+                    break
         if not isinstance(results, list):
             results = [results]
     except Exception as exc:
@@ -720,7 +812,7 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
     output = []
     for i, seg in enumerate(segments):
         r = results[i] if i < len(results) else {}
-        hook = str(r.get("hook", "")).strip().strip('"\'')
+        hook = str(r.get("hook", "")).strip().strip("\"'")
         if not hook:
             hook = seg.get("text", "").strip()[:60]
         else:
@@ -728,9 +820,15 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
         title_val = str(r.get("title") or "")
         caption_val = str(r.get("caption") or "")
         hashtags_raw = r.get("hashtags") or ""
-        hashtags_val = " ".join(str(h) for h in hashtags_raw) if isinstance(hashtags_raw, list) else str(hashtags_raw)
-        hashtags_val = hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
-        
+        hashtags_val = (
+            " ".join(str(h) for h in hashtags_raw)
+            if isinstance(hashtags_raw, list)
+            else str(hashtags_raw)
+        )
+        hashtags_val = (
+            hashtags_val.replace("[", "").replace("]", "").replace("'", "").replace('"', "")
+        )
+
         metadata = {
             "title": title_val[:100] if title_val else "Generated Clip",
             "caption": caption_val[:500] if caption_val else seg.get("text", "")[:500],
@@ -741,58 +839,68 @@ def _batch_generate_metadata(segments: list[dict]) -> list[tuple[str, dict]]:
     return output
 
 
-def _get_media_duration(file_path: str) -> float:
-    """Get duration in seconds of a media file using ffprobe."""
-    try:
-        result = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                file_path,
-            ],
-            capture_output=True, text=True, timeout=15,
-        )
-        return float(result.stdout.strip())
-    except (ValueError, subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("Failed to get duration for %s: %s", file_path, exc)
-        return 0.0
+def _render_black_video(output_path: str, pw: int, ph: int) -> str:
+    """Render a 2-second black video with standard encoding."""
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s={pw}x{ph}:d=2",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        output_path,
+    ]
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
+    return output_path
 
 
-def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 1920) -> str:
+def _create_title_card(
+    text: str, output_path: str, pw: int = 1080, ph: int = 1920, brand: BrandConfig | None = None
+) -> str:
     """Create a 2-second title card with centered text on black background."""
+    if brand:
+        result = generate_title_card(text, output_path, brand, pw, ph)
+        if result:
+            return result
     if not _has_drawtext():
-        pure_black = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            output_path,
-        ]
-        subprocess.run(pure_black, capture_output=True, text=True, timeout=30)
-        return output_path
+        return _render_black_video(output_path, pw, ph)
     safe_text = text.strip()[:50]
     for ch in (":", "'", "%", "[", "]", "{", "}", "\\"):
         safe_text = safe_text.replace(ch, f"\\{ch}")
+    brand_color = brand.primary_color if brand else "white"
     label = f"Best of: {safe_text}"[:50]
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s={pw}x{ph}:d=2",
         "-vf",
         f"drawtext=text='{label}':"
-        f"fontsize=48:fontcolor=white:"
-        f"x=(w-text_w)/2:y=(h-text_h)/2:"
-        f"fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-        "-pix_fmt", "yuv420p",
+        f"fontsize=48:fontcolor={brand_color}:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2"
+        f"{_fontfile_arg()}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
         output_path,
     ]
     logger.debug("Creating title card: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(f"Title card FFmpeg failed: {result.stderr[:500]}")
-    if not os.path.exists(output_path):
-        raise RuntimeError(f"Title card not produced: {output_path}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
     logger.info("Created title card: %s", output_path)
     return output_path
 
@@ -800,33 +908,31 @@ def _create_title_card(text: str, output_path: str, pw: int = 1080, ph: int = 19
 def _create_end_card(output_path: str, pw: int = 1080, ph: int = 1920) -> str:
     """Create a 2-second end card with Subscribe text on black background."""
     if not _has_drawtext():
-        pure_black = [
-            "ffmpeg", "-y",
-            "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            output_path,
-        ]
-        subprocess.run(pure_black, capture_output=True, text=True, timeout=30)
-        return output_path
+        return _render_black_video(output_path, pw, ph)
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=black:s={pw}x{ph}:d=2",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=black:s={pw}x{ph}:d=2",
         "-vf",
-        "drawtext=text='Subscribe for more':"
-        "fontsize=52:fontcolor=white:"
-        "x=(w-text_w)/2:y=(h-text_h)/2:"
-        "fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
-        "-pix_fmt", "yuv420p",
+        f"drawtext=text='Subscribe for more':"
+        f"fontsize=52:fontcolor=white:"
+        f"x=(w-text_w)/2:y=(h-text_h)/2"
+        f"{_fontfile_arg()}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
         output_path,
     ]
     logger.debug("Creating end card: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise RuntimeError(f"End card FFmpeg failed: {result.stderr[:500]}")
-    if not os.path.exists(output_path):
-        raise RuntimeError(f"End card not produced: {output_path}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
     logger.info("Created end card: %s", output_path)
     return output_path
 
@@ -836,6 +942,7 @@ def _render_compilation(
     segments: list[dict],
     video_id: str,
     preset: object | None = None,
+    brand: BrandConfig | None = None,
 ) -> str | None:
     """Stitch already-rendered clips into a 'best of' compilation with title/end cards.
 
@@ -845,9 +952,13 @@ def _render_compilation(
     """
     if preset is None:
         from app.services.platforms import PlatformPreset
+
         preset = PlatformPreset(
-            name="youtube_shorts", label="YouTube Shorts",
-            width=1080, height=1920, max_duration=60.0,
+            name="youtube_shorts",
+            label="YouTube Shorts",
+            width=1080,
+            height=1920,
+            max_duration=60.0,
         )
     pw, ph = preset.width, preset.height
 
@@ -867,7 +978,7 @@ def _render_compilation(
     try:
         first_text = segments[0].get("text", "")[:50] if segments else "Highlights"
         title_path = os.path.join(tmp_dir, "title.mp4")
-        _create_title_card(first_text, title_path, pw, ph)
+        _create_title_card(first_text, title_path, pw, ph, brand)
 
         end_path = os.path.join(tmp_dir, "end.mp4")
         _create_end_card(end_path, pw, ph)
@@ -881,12 +992,18 @@ def _render_compilation(
 
         final_path = os.path.join(tmp_dir, "best_of.mp4")
         cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", concat_file,
-            "-c", "copy",
-            "-movflags", "+faststart",
+            "ffmpeg",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            concat_file,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
             final_path,
         ]
         logger.debug("Running compilation concat: %s", " ".join(cmd))
@@ -924,24 +1041,51 @@ def _render_compilation(
 
 def _render_clip_parallel(args: tuple) -> dict | None:
     """Render a single clip (runs in thread pool)."""
-    input_path, start, end, caption, video_id, clip_idx, preset, hook_text, pre_metadata = args
+    (
+        input_path,
+        start,
+        end,
+        caption,
+        video_id,
+        clip_idx,
+        preset,
+        hook_text,
+        pre_metadata,
+        watermark_filters,
+        caption_style,
+        enable_moderation,
+    ) = args
 
     clip_filename = f"clip_{clip_idx:04d}.mp4"
     clip_dir = os.path.dirname(input_path)
     clip_path = os.path.join(clip_dir, clip_filename)
 
-    _render_clip(input_path, clip_path, start, end, caption, preset, hook_text)
+    _render_clip(
+        input_path,
+        clip_path,
+        start,
+        end,
+        caption,
+        preset,
+        hook_text,
+        watermark_filters,
+        caption_style,
+    )
 
-    moderation = moderate_segment(input_path, caption, start + 1.0)
-    if not moderation["passed"]:
-        logger.warning(
-            "Clip %d flagged by moderation (reason=%s) — skipping upload",
-            clip_idx,
-            moderation["reason"],
-        )
-        if os.path.exists(clip_path):
-            os.unlink(clip_path)
-        return None
+    if enable_moderation:
+        moderation = moderate_segment(input_path, caption, start + 1.0)
+        if not moderation["passed"]:
+            logger.warning(
+                "Clip %d flagged by moderation (reason=%s) — skipping upload",
+                clip_idx,
+                moderation["reason"],
+            )
+            if os.path.exists(clip_path):
+                os.unlink(clip_path)
+            return None
+    else:
+        logger.info("Content moderation is disabled for clip %d, skipping checks", clip_idx)
+        moderation = {"passed": True, "reason": ""}
 
     file_url = _upload_clip(clip_path, video_id, clip_idx)
 
@@ -987,13 +1131,34 @@ def run_render(self, video_id: str):
         if not video:
             raise ValueError(f"Video {video_id} not found")
 
+        # Check user plan for watermark and resolution limits
+        user = session.query(User).filter(User.id == video.user_id).first()
+        needs_watermark = user and user.plan != "pro"
+
+        # Load user preferences for branding
+        prefs = user.preferences or {} if hasattr(user, "preferences") else {}
+        user_brand = BrandConfig(
+            watermark_text=prefs.get("watermark_text", ""),
+            primary_color=prefs.get("primary_color", "#FF6B35"),
+        )
+        caption_style = prefs.get("caption_style", "classic")
+        music_track = prefs.get("music_track", "")
+        enable_moderation = prefs.get("enable_moderation", True)
+
         preset = get_preset(video.platform or "youtube_shorts")
+
+        # Resolution limit for free users
+        if user and user.plan != "pro":
+            if preset.width > 720 and preset.height > 720:
+                scale_factor = 720 / max(preset.width, preset.height)
+                preset.width = int(preset.width * scale_factor)
+                preset.height = int(preset.height * scale_factor)
+                preset.video_bitrate = "2M"
 
         # ── Smart Resume: skip if clips already exist (previous run completed) ──
         from app.models.clip import Clip
-        existing_clips = session.query(Clip).filter(Clip.video_id == video_uuid).count()
-        render_done = existing_clips > 0 and job and job.status == JobStatusEnum.DONE
 
+        existing_clips = session.query(Clip).filter(Clip.video_id == video_uuid).count()
         job = (
             session.query(Job)
             .filter(
@@ -1004,9 +1169,17 @@ def run_render(self, video_id: str):
             )
             .first()
         )
+        render_done = existing_clips > 0 and job and job.status == JobStatusEnum.DONE
 
         if render_done:
-            logger.info("Smart Resume: %d clips already exist for video %s, skipping render", existing_clips, video_id)
+            logger.info(
+                "Smart Resume: %d clips already exist for video %s, skipping render",
+                existing_clips,
+                video_id,
+            )
+            if video.status != VideoStatusEnum.COMPLETED:
+                video.status = VideoStatusEnum.COMPLETED
+                session.commit()
             return
 
         if job:
@@ -1035,8 +1208,10 @@ def run_render(self, video_id: str):
         # Batch-generate all hook texts and metadata in 1-2 Ollama calls
         # instead of 2× sequential calls per segment (was 20+ Ollama calls, now 1-2).
         logger.info("Batch-generating metadata for %d segments using Ollama", len(top_segments))
-        broadcast_sync(video_id, "render", 0.0, "running", f"Analyzing metadata for {len(top_segments)} clips")
-        
+        broadcast_sync(
+            video_id, "render", 0.0, "running", f"Analyzing metadata for {len(top_segments)} clips"
+        )
+
         pre_generated_data = _batch_generate_metadata(top_segments)
 
         broadcast_sync(video_id, "render", 0.0, "running", f"Rendering {len(top_segments)} clips")
@@ -1046,21 +1221,61 @@ def run_render(self, video_id: str):
             logger.info("Downloading video %s for rendering", video_id)
             download_file(video.source_url, input_video_path)
 
+            # Build watermark filters for free users
+            watermark_filters: list[str] | None = None
+            if needs_watermark:
+                watermark_filters = build_watermark_filter(user_brand, 1080, 1920)
+
+            # Apply background music if configured
+            music_track = prefs.get("music_track", "")
+            if music_track and segments:
+                from app.services.music import apply_backing_music, generate_backing_track
+
+                music_path = tempfile.mktemp(suffix=".mp3")
+                try:
+                    video_duration = get_media_duration(input_video_path)
+                    result = generate_backing_track(music_track, video_duration, music_path)
+                    if result:
+                        speech_segments = [
+                            {"start": s["start"], "end": s["end"]}
+                            for s in segments
+                            if s.get("text", "").strip()
+                        ]
+                        input_video_path = apply_backing_music(
+                            input_video_path, music_path, speech_segments, input_video_path
+                        )
+                except Exception as e:
+                    logger.warning("Background music failed: %s", e)
+                finally:
+                    if os.path.exists(music_path):
+                        os.unlink(music_path)
+
             total = len(top_segments)
             render_args = [
-                (input_video_path, seg["start"], seg["end"],
-                 seg.get("text", ""), video_id, idx, preset,
-                 pre_generated_data[idx][0], pre_generated_data[idx][1])
+                (
+                    input_video_path,
+                    seg["start"],
+                    seg["end"],
+                    seg.get("text", ""),
+                    video_id,
+                    idx,
+                    preset,
+                    pre_generated_data[idx][0],
+                    pre_generated_data[idx][1],
+                    watermark_filters,
+                    caption_style,
+                    enable_moderation,
+                )
                 for idx, seg in enumerate(top_segments)
             ]
 
-            # Parallel render
+            # Parallel render (capped at max 3 workers to prevent CPU/memory exhaustion)
             from app.services.device import get_optimal_threads
-            render_workers = get_optimal_threads()
+
+            render_workers = min(3, get_optimal_threads())
             with ThreadPoolExecutor(max_workers=render_workers) as executor:
                 futures = {
-                    executor.submit(_render_clip_parallel, args): args
-                    for args in render_args
+                    executor.submit(_render_clip_parallel, args): args for args in render_args
                 }
                 results = []
                 for future in as_completed(futures):
@@ -1101,29 +1316,37 @@ def run_render(self, video_id: str):
                 if job:
                     job.progress = (idx + 1) / total
                 session.commit()
-                broadcast_sync(video_id, "render", (idx + 1) / total, "running", f"Rendered {idx + 1}/{total} clips")
+                broadcast_sync(
+                    video_id,
+                    "render",
+                    (idx + 1) / total,
+                    "running",
+                    f"Rendered {idx + 1}/{total} clips",
+                )
 
             # Build compilation from already-rendered clips (no re-rendering)
             if len(results) >= 3:
                 comp_clip_paths = [
-                    r["clip_path"] for r in results[:5]
+                    r["clip_path"]
+                    for r in results[:5]
                     if r.get("clip_path") and os.path.exists(r["clip_path"])
                 ]
                 comp_segments = [
                     {"start": r["start"], "end": r["end"], "text": r.get("caption", "")}
                     for r in results[:5]
                 ]
-                comp_url = _render_compilation(comp_clip_paths, comp_segments, video_id, preset)
+                comp_url = _render_compilation(
+                    comp_clip_paths, comp_segments, video_id, preset, user_brand
+                )
                 if comp_url:
-                    logger.info(
-                        "Compilation URL for video %s: %s", video_id, comp_url
-                    )
+                    logger.info("Compilation URL for video %s: %s", video_id, comp_url)
                 else:
                     logger.warning("Compilation skipped for video %s", video_id)
             else:
                 logger.info(
                     "Skipping compilation for video %s: need 3+ clips, have %d",
-                    video_id, len(results),
+                    video_id,
+                    len(results),
                 )
 
             video.status = VideoStatusEnum.COMPLETED
@@ -1133,6 +1356,18 @@ def run_render(self, video_id: str):
                 job.progress = 1.0
             session.commit()
             broadcast_sync(video_id, "render", 1.0, "completed", f"Rendered {len(results)} clips")
+
+            from app.services.webhooks import fire_event_sync
+
+            fire_event_sync(
+                video_id,
+                "render.completed",
+                {
+                    "status": "completed",
+                    "clips_count": len(results),
+                },
+            )
+
             logger.info(
                 "Rendered %d clips for video %s",
                 len(top_segments),
@@ -1151,6 +1386,7 @@ def run_render(self, video_id: str):
             video = session.query(Video).filter(Video.id == uuid.UUID(video_id)).first()
             if video:
                 video.status = VideoStatusEnum.FAILED
+                video.transcript = {"error": f"Rendering failed: {exc}"}
             job = (
                 session.query(Job)
                 .filter(
@@ -1166,6 +1402,8 @@ def run_render(self, video_id: str):
             session.commit()
         except Exception:
             session.rollback()
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

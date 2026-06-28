@@ -1,4 +1,5 @@
 """Test video fixture generator. Creates a small synthetic video using FFmpeg."""
+
 import logging
 import os
 import subprocess
@@ -19,19 +20,30 @@ def create_test_video(output_path: str, duration: float = 5.0) -> str:
         The path to the generated video file
     """
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=blue:size=1920x1080:d={duration}",
-        "-f", "lavfi",
-        "-i", f"sine=frequency=440:duration={duration}",
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=blue:size=1920x1080:d={duration}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"sine=frequency=440:duration={duration}",
         "-filter_complex",
         "[0]drawbox=x=100:y=100:w=100:h=100:color=red:t=fill:enable='between(t,0,2)'[v]",
-        "-map", "[v]",
-        "-map", "1",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "28",
-        "-c:a", "aac",
+        "-map",
+        "[v]",
+        "-map",
+        "1",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "28",
+        "-c:a",
+        "aac",
         "-shortest",
         output_path,
     ]

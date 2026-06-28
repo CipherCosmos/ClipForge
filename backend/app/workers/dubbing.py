@@ -2,6 +2,7 @@
 
 Pipeline: extract audio → translate transcript → TTS → replace audio → upload.
 """
+
 import logging
 import os
 import shutil
@@ -11,11 +12,11 @@ import uuid
 
 import httpx
 
-from app.config import settings
 from app.models import Clip, Video
-from app.services.storage import ensure_bucket, upload_file, get_presigned_url
+from app.services.storage import ensure_bucket, get_presigned_url, upload_file
 from app.services.translation import SUPPORTED_LANGUAGES, translate_text
 from app.services.tts import generate_speech
+from app.services.video import get_media_duration
 from app.workers.celery_app import SyncSessionLocal, celery_app
 
 logger = logging.getLogger(__name__)
@@ -56,41 +57,44 @@ def dub_clip(
             return False
 
         # Step 3: Get duration of generated speech
-        duration_result = subprocess.run([
-            "ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of",
-            "default=noprint_wrappers=1:nokey=1", speech_path,
-        ], capture_output=True, text=True, timeout=15)
-        speech_duration = float(duration_result.stdout.strip() or "3.0")
+        speech_duration = get_media_duration(speech_path, default=3.0)
 
         # Step 4: Get duration of original clip
-        original_duration_result = subprocess.run([
-            "ffprobe", "-v", "error", "-show_entries",
-            "format=duration", "-of",
-            "default=noprint_wrappers=1:nokey=1", input_video,
-        ], capture_output=True, text=True, timeout=15)
-        original_duration = float(original_duration_result.stdout.strip() or "5.0")
+        original_duration = get_media_duration(input_video, default=5.0)
 
-        # Step 5: Speed up/slow down speech to match original clip duration
-        tempo = original_duration / max(speech_duration, 1.0)
-        tempo = max(0.5, min(2.0, tempo))
+        # Step 5: Speed up speech ONLY if it is longer than the original video duration
+        if speech_duration > original_duration:
+            tempo = speech_duration / original_duration
+            # Cap tempo at 1.4 to keep the speech natural and intelligible
+            tempo = min(1.4, tempo)
+        else:
+            tempo = 1.0
 
-        # Build audio filter: tempo + normalize volume
-        audio_filter = f"atempo={tempo:.2f},loudnorm=I=-16:LRA=11:TP=-1.5"
+        # Build audio filter: tempo + normalize volume + pad with silence to match video length
+        audio_filter = f"atempo={tempo:.2f},loudnorm=I=-16:LRA=11:TP=-1.5,apad"
 
-        # Step 6: Replace audio in video
+        # Step 6: Replace audio in video (use -t to enforce original duration, prevent truncation)
         cmd = [
-            "ffmpeg", "-y",
-            "-i", input_video,
-            "-i", speech_path,
+            "ffmpeg",
+            "-y",
+            "-i",
+            input_video,
+            "-i",
+            speech_path,
             "-filter_complex",
             f"[1:a]{audio_filter}[dubbed]",
-            "-map", "0:v",
-            "-map", "[dubbed]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-shortest",
+            "-map",
+            "0:v",
+            "-map",
+            "[dubbed]",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-t",
+            f"{original_duration:.2f}",
             output_video,
         ]
 
@@ -107,7 +111,9 @@ def dub_clip(
 
         logger.info(
             "Dubbed clip created: %s (lang=%s, tempo=%.2f)",
-            output_video, target_lang, tempo,
+            output_video,
+            target_lang,
+            tempo,
         )
         return True
 
@@ -159,9 +165,7 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
             with open(input_path, "wb") as f:
                 f.write(resp.content)
 
-        success = dub_clip(
-            input_path, output_path, transcript, source_lang, target_lang
-        )
+        success = dub_clip(input_path, output_path, transcript, source_lang, target_lang)
         if not success:
             logger.warning("Dubbing failed for clip %s", clip_id)
             return
@@ -174,7 +178,22 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
 
         logger.info(
             "Dubbed clip uploaded: %s (lang=%s, url=%s)",
-            clip_id, target_lang, dubbed_url,
+            clip_id,
+            target_lang,
+            dubbed_url,
+        )
+
+        from app.services.webhooks import fire_event_sync
+
+        fire_event_sync(
+            str(clip.video_id),
+            "dub.completed",
+            {
+                "status": "completed",
+                "clip_id": clip_id,
+                "target_language": target_lang,
+                "dubbed_url": dubbed_url,
+            },
         )
 
         return {
@@ -185,11 +204,13 @@ def run_dub_clip(self, clip_id: str, target_lang: str = "es"):
 
     except Exception as exc:
         logger.exception("Dub clip failed for %s", clip_id)
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()
         if tmp_dir and os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
@@ -226,11 +247,15 @@ def run_dub_video(self, video_id: str, target_langs: list[str] | None = None):
 
         logger.info(
             "Enqueued dubbing for video %s: %d clips x %d languages",
-            video_id, len(clips), len(target_langs),
+            video_id,
+            len(clips),
+            len(target_langs),
         )
 
     except Exception as exc:
         logger.exception("Dub video failed for %s", video_id)
-        raise self.retry(exc=exc)
+        if self and hasattr(self, "retry"):
+            raise self.retry(exc=exc)
+        raise exc
     finally:
         session.close()

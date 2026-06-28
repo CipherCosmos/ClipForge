@@ -64,24 +64,24 @@ export function UploadZone({ onFile, busy }: UploadZoneProps) {
           "relative flex cursor-pointer flex-col items-center rounded-xl border-2 border-dashed px-6 py-16 transition-all duration-200",
           dragOver
             ? "border-brand-500 bg-brand-500/5"
-            : "border-slate-700 bg-slate-800/20 hover:border-slate-600 hover:bg-slate-800/30",
+            : "border-border bg-muted/20 hover:border-border hover:bg-muted/30",
           busy && "cursor-wait opacity-60"
         )}
       >
         <div className={cn(
           "mb-4 flex h-14 w-14 items-center justify-center rounded-xl transition-all duration-300",
-          dragOver ? "bg-brand-500/10 scale-110" : "bg-slate-800"
+          dragOver ? "bg-brand-500/10 scale-110" : "bg-muted"
         )}>
           {busy ? (
             <Loader2 size={24} className="animate-spin text-brand-400" />
           ) : (
-            <Upload size={24} className={dragOver ? "text-brand-400" : "text-slate-400"} />
+            <Upload size={24} className={dragOver ? "text-brand-400" : "text-muted-foreground"} />
           )}
         </div>
-        <p className="text-sm font-medium text-slate-200">
+        <p className="text-sm font-medium text-foreground">
           {busy ? "Uploading..." : "Drop your video here or click to browse"}
         </p>
-        <p className="mt-1.5 text-xs text-slate-500">
+        <p className="mt-1.5 text-xs text-muted-foreground">
           MP4, MOV, WebM, MP3, WAV &middot; Max 2GB
         </p>
         <input

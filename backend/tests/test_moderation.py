@@ -23,7 +23,9 @@ class TestModerateSegment:
     @patch("app.services.moderation.moderate_image")
     def test_clean_text_passes(self, mock_moderate_image):
         mock_moderate_image.return_value = {
-            "nsfw": False, "confidence": 0.0, "label": "neutral",
+            "nsfw": False,
+            "confidence": 0.0,
+            "label": "neutral",
         }
         result = moderate_segment("dummy.mp4", "Hello, this is clean", 0.0)
         assert result["passed"] is True
@@ -33,7 +35,9 @@ class TestModerateSegment:
     @patch("app.services.moderation.moderate_image")
     def test_flagged_text_does_not_pass(self, mock_moderate_image):
         mock_moderate_image.return_value = {
-            "nsfw": False, "confidence": 0.0, "label": "neutral",
+            "nsfw": False,
+            "confidence": 0.0,
+            "label": "neutral",
         }
         result = moderate_segment("dummy.mp4", "This is shit", 0.0)
         assert result["passed"] is False

@@ -48,9 +48,7 @@ def _generate_speech_edge_tts(text: str, voice: str, output_path: str) -> bool:
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning(
-                "edge-tts failed (rc=%d): %s", result.returncode, result.stderr[:200]
-            )
+            logger.warning("edge-tts failed (rc=%d): %s", result.returncode, result.stderr[:200])
             return False
         if not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
             logger.warning("edge-tts produced empty output: %s", output_path)
@@ -67,8 +65,11 @@ def _generate_speech_edge_tts(text: str, voice: str, output_path: str) -> bool:
         return False
 
 
-def _generate_sine_tone(output_path: str, duration: float = 3.0) -> bool:
-    """Generate a fallback sine tone audio file.
+def _generate_fallback_audio(output_path: str, duration: float = 3.0) -> bool:
+    """Generate a fallback audio file using multi-tone synthesis.
+
+    Uses formant-like frequencies (500Hz + 1500Hz + 2500Hz) to produce a
+    more natural-sounding wave than a single sine tone.
 
     Args:
         output_path: Path to write the audio file.
@@ -80,11 +81,20 @@ def _generate_sine_tone(output_path: str, duration: float = 3.0) -> bool:
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-f", "lavfi", "-i", f"sine=frequency=440:duration={duration}",
-                "-ar", "22050",
-                "-ac", "1",
-                "-b:a", "64k",
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"aevalsrc=sin(500*t)*0.6+sin(1500*t)*0.3+sin(2500*t)*0.1:s=44100:d={duration}",
+                "-af",
+                "volume=0.3,afftdn=nf=-25,lowpass=f=3000",
+                "-ar",
+                "22050",
+                "-ac",
+                "1",
+                "-b:a",
+                "64k",
                 output_path,
             ],
             capture_output=True,
@@ -100,7 +110,7 @@ def _generate_sine_tone(output_path: str, duration: float = 3.0) -> bool:
 def generate_speech(text: str, lang: str, output_path: str | None = None) -> str | None:
     """Generate speech audio for the given text in the target language.
 
-    Uses Edge TTS primarily. Falls back to a sine tone if TTS is unavailable,
+    Uses Edge TTS primarily. Falls back to multi-tone synthesis if TTS is unavailable,
     ensuring the dubbing pipeline never breaks.
 
     Args:
@@ -121,11 +131,11 @@ def generate_speech(text: str, lang: str, output_path: str | None = None) -> str
             logger.info("Generated TTS speech for lang %s at %s", lang, output_path)
             return output_path
     else:
-        logger.warning("No voice mapped for lang '%s', falling back to sine tone", lang)
+        logger.warning("No voice mapped for lang '%s', falling back to multi-tone synthesis", lang)
 
     text_len_seconds = max(2.0, min(10.0, len(text) * 0.05))
-    if _generate_sine_tone(output_path, duration=text_len_seconds):
-        logger.info("Generated fallback sine tone at %s", output_path)
+    if _generate_fallback_audio(output_path, duration=text_len_seconds):
+        logger.info("Generated fallback audio at %s", output_path)
         return output_path
 
     logger.error("Failed to generate any audio for lang %s", lang)

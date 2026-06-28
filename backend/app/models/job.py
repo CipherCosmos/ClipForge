@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey
+from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -25,6 +25,7 @@ class JobStatusEnum(str, enum.Enum):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_video_id", "video_id"), Index("ix_jobs_type", "type"))
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     video_id = Column(

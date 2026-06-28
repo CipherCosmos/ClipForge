@@ -1,0 +1,60 @@
+# Test-only dependencies — excludes heavy GPU/ML packages (torch, transformers, etc.)
+# These are lazy-imported or mocked in conftest.py so they're not needed for CI.
+
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Database
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
+# Queue
+celery[redis]==5.4.0
+redis==5.2.1
+
+# Storage
+minio==7.2.14
+
+# Config & validation
+pydantic==2.10.3
+email-validator>=2.0.0
+pydantic-settings==2.7.0
+
+# HTTP client
+yt-dlp>=2024.12.13
+
+# Rate limiting
+slowapi>=0.1.9
+
+# Error tracking & metrics
+sentry-sdk[fastapi]>=2.0.0
+prometheus-fastapi-instrumentator>=7.0.0
+
+# Stripe
+stripe>=8.0.0
+
+# Database migrations
+alembic==1.18.5
+psycopg2-binary==2.9.12
+
+# Video (used by render.py and scene_detect.py at module top level)
+opencv-python-headless==4.10.0.84
+
+# Scene detection
+scenedetect[opencv]>=0.7.0
+
+# Utils
+cachetools>=5.5.0
+
+# Testing
+ruff>=0.15.0
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+httpx>=0.28.0

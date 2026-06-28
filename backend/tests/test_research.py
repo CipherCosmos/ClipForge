@@ -1,9 +1,10 @@
 import json
-import pytest
-from unittest.mock import patch, MagicMock
-from httpx import ASGITransport, AsyncClient
 import uuid
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app.core.security import get_current_user
 from app.database import get_db
@@ -22,6 +23,7 @@ SAMPLE_USER = User(
 class MockAsyncSession:
     async def commit(self):
         pass
+
     async def close(self):
         pass
 
@@ -35,7 +37,6 @@ def setup_dependency_overrides():
 
 
 class TestResearchEndpoints:
-    
     @pytest.mark.asyncio
     @patch("app.api.research.httpx.AsyncClient")
     async def test_get_trends_google_success(self, mock_async_client_class):
@@ -45,23 +46,26 @@ class TestResearchEndpoints:
         # Mock Google Trends RSS feed XML response
         mock_xml = (
             '<rss xmlns:ht="https://trends.google.com/trending/rss"><channel>'
-            '<item><title>Bitcoin Price</title><ht:approx_traffic>100K+ searches</ht:approx_traffic></item>'
-            '<item><title>Apple Event</title><ht:approx_traffic>50K+ searches</ht:approx_traffic></item>'
-            '</channel></rss>'
+            "<item><title>Bitcoin Price</title>"
+            "<ht:approx_traffic>100K+ searches</ht:approx_traffic></item>"
+            "<item><title>Apple Event</title>"
+            "<ht:approx_traffic>50K+ searches</ht:approx_traffic></item>"
+            "</channel></rss>"
         )
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.text = mock_xml
-        
+
         async def mock_get(url, *args, **kwargs):
             return mock_response
+
         mock_client.get = mock_get
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get("/api/research/trends?source=google&geo=US")
-            
+
         assert r.status_code == 200
         data = r.json()
         assert "trends" in data
@@ -89,15 +93,16 @@ class TestResearchEndpoints:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.text = mock_xml
-        
+
         async def mock_get(url, *args, **kwargs):
             return mock_response
+
         mock_client.get = mock_get
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get("/api/research/trends?source=reddit")
-            
+
         assert r.status_code == 200
         data = r.json()
         assert "trends" in data
@@ -121,15 +126,16 @@ class TestResearchEndpoints:
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.text = mock_xml
-        
+
         async def mock_get(url, *args, **kwargs):
             return mock_response
+
         mock_client.get = mock_get
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             r = await ac.get("/api/research/trends?source=news&geo=GB")
-            
+
         assert r.status_code == 200
         data = r.json()
         assert "trends" in data
@@ -138,12 +144,11 @@ class TestResearchEndpoints:
         assert data["trends"][0]["source"] == "news"
 
     @pytest.mark.asyncio
-    @patch("app.api.research.httpx.AsyncClient")
-    async def test_analyze_topic_ollama_success(self, mock_async_client_class):
+    @patch("app.services.llm._get_http")
+    async def test_analyze_topic_ollama_success(self, mock_get_http):
         mock_client = MagicMock()
-        mock_async_client_class.return_value.__aenter__.return_value = mock_client
+        mock_get_http.return_value = mock_client
 
-        # Mock Ollama generation response returning expanded JSON
         ollama_response_json = {
             "viral_potential": 0.95,
             "video_concept": "Concept description",
@@ -156,21 +161,20 @@ class TestResearchEndpoints:
             "hashtags": ["one", "two"],
             "viral_triggers": ["FOMO", "Trend Wave"],
             "audio_music_recommendation": "Trap beat",
-            "target_audience": "Tech people"
+            "target_audience": "Tech people",
         }
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.json = MagicMock(return_value={"response": json.dumps(ollama_response_json)})
-        
-        async def mock_post(url, *args, **kwargs):
-            return mock_response
-        mock_client.post = mock_post
+        mock_client.post.return_value = mock_response
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.post("/api/research/analyze", json={"topic": "New Tech Event", "tone": "viral"})
-            
+            r = await ac.post(
+                "/api/research/analyze", json={"topic": "New Tech Event", "tone": "viral"}
+            )
+
         assert r.status_code == 200
         data = r.json()
         assert data["viral_potential"] == 0.95
@@ -180,22 +184,20 @@ class TestResearchEndpoints:
         assert data["target_audience"] == "Tech people"
 
     @pytest.mark.asyncio
-    @patch("app.api.research.httpx.AsyncClient")
-    async def test_analyze_topic_ollama_failure_fallback(self, mock_async_client_class):
+    @patch("app.services.llm._get_http")
+    async def test_analyze_topic_ollama_failure_fallback(self, mock_get_http):
         mock_client = MagicMock()
-        mock_async_client_class.return_value.__aenter__.return_value = mock_client
-        
-        async def mock_post(url, *args, **kwargs):
-            raise Exception("Ollama connection error")
-        mock_client.post = mock_post
+        mock_get_http.return_value = mock_client
+        mock_client.post.side_effect = Exception("Ollama connection error")
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.post("/api/research/analyze", json={"topic": "Bitcoin Crash", "tone": "clickbait"})
-            
+            r = await ac.post(
+                "/api/research/analyze", json={"topic": "Bitcoin Crash", "tone": "clickbait"}
+            )
+
         assert r.status_code == 200
         data = r.json()
-        # Should return fallback structure
         assert data["viral_potential"] == 0.85
         assert len(data["hook_variations"]) == 3
         assert "hashtags" in data
@@ -215,15 +217,15 @@ class TestResearchEndpoints:
                     "url": "https://www.youtube.com/watch?v=123",
                     "duration": 45,
                     "uploader": "Uploader One",
-                    "view_count": 10000
+                    "view_count": 10000,
                 },
                 {
                     "title": "Crawl Video 2 (Long)",
                     "url": "https://www.youtube.com/watch?v=456",
                     "duration": 120,
                     "uploader": "Uploader Two",
-                    "view_count": 500000
-                }
+                    "view_count": 500000,
+                },
             ]
         }
         mock_ytdl.return_value.__enter__.return_value = mock_instance
@@ -231,12 +233,16 @@ class TestResearchEndpoints:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             # Check all
-            r_all = await ac.post("/api/research/crawl", json={"query": "test query", "video_type": "all"})
+            r_all = await ac.post(
+                "/api/research/crawl", json={"query": "test query", "video_type": "all"}
+            )
             assert r_all.status_code == 200
             assert len(r_all.json()["videos"]) == 2
 
             # Check shorts only (duration <= 60s)
-            r_shorts = await ac.post("/api/research/crawl", json={"query": "test query", "video_type": "shorts"})
+            r_shorts = await ac.post(
+                "/api/research/crawl", json={"query": "test query", "video_type": "shorts"}
+            )
             assert r_shorts.status_code == 200
             assert len(r_shorts.json()["videos"]) == 1
             assert r_shorts.json()["videos"][0]["title"] == "Crawl Video 1"

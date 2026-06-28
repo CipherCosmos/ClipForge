@@ -1,3 +1,10 @@
+"""Merges NLP + scene detect results and triggers render.
+
+Each worker saves its results independently to the DB segments.
+This function reads from DB, merges, and triggers render when both are done.
+Called by NLP or scene_detect when they complete.
+"""
+
 import logging
 import uuid
 
@@ -5,99 +12,78 @@ from sqlalchemy import and_
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Job, JobStatusEnum, JobTypeEnum, Video
-from app.workers.celery_app import SyncSessionLocal, celery_app
+from app.services.scoring import calculate_viral_score
+from app.workers.celery_app import SyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
 
-def _calculate_viral_score(seg: dict) -> float:
-    return (
-        0.25 * seg.get("hook_score", 0.0) +
-        0.20 * seg.get("emotion_intensity", 0.0) +
-        0.15 * seg.get("engagement_potential", 0.0) +
-        0.10 * seg.get("keyword_density", 0.0) +
-        0.10 * seg.get("scene_change_intensity", 0.0) +
-        0.10 * seg.get("audio_event_score", 0.0) +
-        0.05 * seg.get("audio_energy", 0.0) +
-        0.05 * seg.get("speaker_confidence", 0.0)
-    )
+def _has_nlp_keys(segments: list) -> bool:
+    """Check if NLP has run by looking for hook_score key presence (even if zero)."""
+    if not segments:
+        return False
+    return any("hook_score" in (s or {}) for s in segments)
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=30)
-def run_join_and_render(self, results, video_id: str):
+def _has_scene_keys(segments: list) -> bool:
+    """Check if scene detect has run by looking for scene keys (even if zero)."""
+    if not segments:
+        return False
+    return any("speaker_confidence" in (s or {}) for s in segments)
+
+
+def check_and_merge(video_id: str) -> bool:
+    """Check if both NLP and scene detect are done, merge if so, and trigger render.
+
+    Returns True if merge + render was triggered, False if waiting for other worker.
+    """
     session = SyncSessionLocal()
     try:
         video_uuid = uuid.UUID(video_id)
         video = session.query(Video).filter(Video.id == video_uuid).first()
         if not video:
-            raise ValueError(f"Video {video_id} not found")
+            return False
 
-        # In a chord, results is a list of return values from the header tasks
-        if len(results) != 2:
-            logger.error("Expected 2 results from parallel workers, got %d", len(results))
-            return
+        segments = video.segments
+        if not segments:
+            return False
 
-        nlp_segments = results[0]
-        scene_segments = results[1]
+        has_nlp = _has_nlp_keys(segments)
+        has_scene = _has_scene_keys(segments)
 
-        if not nlp_segments or not scene_segments:
-            logger.warning("Missing segments from parallel workers for video %s", video_id)
-            return
-            
-        if len(nlp_segments) != len(scene_segments):
-            logger.warning("Segment length mismatch: NLP=%d, Scene=%d", len(nlp_segments), len(scene_segments))
-            return
+        logger.info("Merge check for %s: NLP=%s Scene=%s", video_id[:8], has_nlp, has_scene)
 
-        # Merge segments
-        merged_segments = []
-        for nlp_seg, scene_seg in zip(nlp_segments, scene_segments):
-            merged = nlp_seg.copy()
-            
-            # Update with scene detect keys
-            merged.update({
-                "scene_change_intensity": scene_seg.get("scene_change_intensity", 0.0),
-                "audio_emotions": scene_seg.get("audio_emotions", []),
-                "audio_events": scene_seg.get("audio_events", []),
-                "audio_event_score": scene_seg.get("audio_event_score", 0.0),
-                "prosody": scene_seg.get("prosody", {}),
-                "audio_energy": scene_seg.get("audio_energy", 0.0),
-                "speaker_confidence": scene_seg.get("speaker_confidence", 0.0),
-            })
+        if not (has_nlp and has_scene):
+            return False  # Waiting for the other worker
 
-            # Recalculate final viral score
-            merged["viral_score"] = _calculate_viral_score(merged)
-            merged["viral_score"] *= merged.get("trend_boost", 1.0)
+        # Both done — merge is already in segments (each worker saved its keys)
+        # Just recalculate viral scores
+        for seg in segments:
+            seg["viral_score"] = calculate_viral_score(seg)
+            seg["viral_score"] *= seg.get("trend_boost", 1.0)
 
-            merged_segments.append(merged)
-
-        video.segments = merged_segments
+        video.segments = segments
         flag_modified(video, "segments")
-        
-        job = session.query(Job).filter(
-            and_(Job.video_id == video_uuid, Job.type == JobTypeEnum.HIGHLIGHT)
-        ).first()
+
+        job = (
+            session.query(Job)
+            .filter(and_(Job.video_id == video_uuid, Job.type == JobTypeEnum.HIGHLIGHT))
+            .first()
+        )
         if job:
             job.status = JobStatusEnum.DONE
             job.progress = 1.0
-            
-        session.commit()
 
-        logger.info("Successfully merged NLP and Scene Detect results for video %s", video_id)
+        session.commit()
+        logger.info("Merged NLP + Scene Detect results for video %s", video_id[:8])
 
         from app.workers.render import run_render
-        run_render.delay(video_id)
 
-    except Exception as exc:
-        logger.exception("Join and render failed for video %s", video_id)
-        try:
-            job = session.query(Job).filter(
-                and_(Job.video_id == uuid.UUID(video_id), Job.type == JobTypeEnum.HIGHLIGHT)
-            ).first()
-            if job:
-                job.status = JobStatusEnum.FAILED
-            session.commit()
-        except Exception:
-            session.rollback()
-        raise self.retry(exc=exc)
+        run_render.delay(video_id)
+        return True
+
+    except Exception:
+        logger.exception("Merge check failed for video %s", video_id)
+        return False
     finally:
         session.close()

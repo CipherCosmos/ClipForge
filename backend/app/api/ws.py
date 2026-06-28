@@ -1,4 +1,5 @@
 """WebSocket endpoint for real-time pipeline progress streaming."""
+
 import asyncio
 import json
 import logging
@@ -33,20 +34,26 @@ class ConnectionManager:
                 del self._connections[video_id]
 
     async def broadcast_progress(
-        self, video_id: str, job_type: str, progress: float, status: str,
+        self,
+        video_id: str,
+        job_type: str,
+        progress: float,
+        status: str,
         message: str = "",
     ):
         """Send progress update to all connected clients for a video."""
         if video_id not in self._connections:
             return
 
-        payload = json.dumps({
-            "type": "progress",
-            "job_type": job_type,
-            "progress": progress,
-            "status": status,
-            "message": message,
-        })
+        payload = json.dumps(
+            {
+                "type": "progress",
+                "job_type": job_type,
+                "progress": progress,
+                "status": status,
+                "message": message,
+            }
+        )
 
         stale = []
         for ws in self._connections[video_id]:
@@ -74,8 +81,8 @@ def broadcast_sync(video_id: str, job_type: str, progress: float, status: str, m
             loop.run_until_complete(
                 manager.broadcast_progress(video_id, job_type, progress, status, message)
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Broadcast failed: %s", e)
 
 
 @router.websocket("/ws/progress/{video_id}")
@@ -95,6 +102,7 @@ async def websocket_progress(
 
     try:
         from app.core.security import decode_token
+
         payload = decode_token(token)
         if payload is None:
             await websocket.close(code=4001)

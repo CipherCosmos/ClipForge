@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, String
+from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -18,6 +18,7 @@ class VideoStatusEnum(str, enum.Enum):
 
 class Video(Base):
     __tablename__ = "videos"
+    __table_args__ = (Index("ix_videos_user_id", "user_id"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -29,6 +30,7 @@ class Video(Base):
     segments = Column(JSONB, nullable=True)
     language = Column(String(10), nullable=True)
     platform = Column(String(50), nullable=True, default="youtube_shorts")
+    thumbnail_url = Column(String(1024), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User", backref="videos")

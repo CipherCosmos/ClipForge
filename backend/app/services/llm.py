@@ -1,27 +1,62 @@
+import asyncio
 import logging
-import json
+import re
+from typing import Any, Dict, Optional
+
 import httpx
-from typing import Optional, Dict, Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_http_client: httpx.Client | None = None
+
+
+def _get_http():
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=180.0)
+    return _http_client
+
+
+def extract_json_from_text(text: str) -> str:
+    """Extract and return the JSON substring from a text response."""
+    text = text.strip()
+    # Match markdown code block ```json ... ``` or ``` ... ```
+    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if match:
+        return match.group(1).strip()
+
+    # Try to find the outer-most curly braces or square brackets
+    start_curly = text.find("{")
+    start_bracket = text.find("[")
+
+    if start_curly != -1 and (start_bracket == -1 or start_curly < start_bracket):
+        end_curly = text.rfind("}")
+        if end_curly != -1:
+            return text[start_curly : end_curly + 1]
+    elif start_bracket != -1:
+        end_bracket = text.rfind("]")
+        if end_bracket != -1:
+            return text[start_bracket : end_bracket + 1]
+
+    return text
 
 
 def generate_llm(
     prompt: str,
     system_prompt: Optional[str] = None,
     format_json: bool = False,
-    timeout: float = 30.0
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
-    """Route LLM generation to Groq API (if configured) or local Ollama (fallback). Synchronous version."""
+    """Route LLM generation to Groq API (if configured) or local Ollama (fallback)."""
     if settings.GROQ_API_KEY:
         try:
             logger.info("Generating via Groq Cloud API (%s)...", settings.GROQ_LLM_MODEL)
             url = "https://api.groq.com/openai/v1/chat/completions"
             headers = {
                 "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
             }
             messages = []
             if system_prompt:
@@ -36,12 +71,14 @@ def generate_llm(
             if format_json:
                 payload["response_format"] = {"type": "json_object"}
 
-            with httpx.Client(timeout=timeout) as client:
-                resp = client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                return {"response": content}
+            client = _get_http()
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            if format_json:
+                content = extract_json_from_text(content)
+            return {"response": content}
         except Exception as e:
             logger.error("Failed to generate via Groq API: %s. Falling back to local Ollama.", e)
 
@@ -53,17 +90,21 @@ def generate_llm(
         "prompt": prompt,
         "stream": False,
     }
-    if format_json:
-        payload["format"] = "json"
+    # Note: We omit payload["format"] = "json" because Ollama's format constraints
+    # fail with thinking models (like Qwen 3.5 thinking models).
+    # Instead, we request JSON in prompt and parse/extract it via extract_json_from_text.
     if system_prompt:
         payload["system"] = system_prompt
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return {"response": data.get("response", "")}
+        client = _get_http()
+        resp = client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("response", "")
+        if format_json:
+            content = extract_json_from_text(content)
+        return {"response": content}
     except Exception as e:
         logger.error("Local Ollama generation failed: %s", e)
         raise e
@@ -73,58 +114,7 @@ async def generate_llm_async(
     prompt: str,
     system_prompt: Optional[str] = None,
     format_json: bool = False,
-    timeout: float = 30.0
+    timeout: float = 30.0,
 ) -> Dict[str, Any]:
-    """Route LLM generation to Groq API (if configured) or local Ollama (fallback). Asynchronous version."""
-    if settings.GROQ_API_KEY:
-        try:
-            logger.info("Generating asynchronously via Groq Cloud API (%s)...", settings.GROQ_LLM_MODEL)
-            url = "https://api.groq.com/openai/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-
-            payload = {
-                "model": settings.GROQ_LLM_MODEL,
-                "messages": messages,
-                "temperature": 0.2,
-            }
-            if format_json:
-                payload["response_format"] = {"type": "json_object"}
-
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                return {"response": content}
-        except Exception as e:
-            logger.error("Failed async Groq generation: %s. Falling back to local Ollama.", e)
-
-    # Fallback to local Ollama
-    logger.info("Generating asynchronously via local Ollama (%s)...", settings.OLLAMA_MODEL)
-    url = f"{settings.OLLAMA_URL}/api/generate"
-    payload = {
-        "model": settings.OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-    }
-    if format_json:
-        payload["format"] = "json"
-    if system_prompt:
-        payload["system"] = system_prompt
-
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            return {"response": data.get("response", "")}
-    except Exception as e:
-        logger.error("Local async Ollama generation failed: %s", e)
-        raise e
+    """Async wrapper around generate_llm — runs sync logic in a thread."""
+    return await asyncio.to_thread(generate_llm, prompt, system_prompt, format_json, timeout)

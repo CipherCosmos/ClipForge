@@ -3,7 +3,7 @@ import { authAPI } from "@/lib/api"
 
 interface AuthState {
   token: string | null
-  user: { id: string; email: string; plan: string } | null
+  user: { id: string; email: string; plan: string; email_verified?: boolean } | null
   loading: boolean
 }
 
@@ -24,17 +24,20 @@ const authSlice = createSlice({
   name: "auth",
   initialState,
   reducers: {
-    setCredentials(state, action: PayloadAction<{ token: string; user: AuthState["user"] }>) {
+    setCredentials(state, action: PayloadAction<{ token: string; user: AuthState["user"]; refresh_token?: string }>) {
       state.token = action.payload.token
       state.user = action.payload.user
       localStorage.setItem("token", action.payload.token)
+      if (action.payload.refresh_token) localStorage.setItem("refresh_token", action.payload.refresh_token)
       if (action.payload.user) localStorage.setItem("user", JSON.stringify(action.payload.user))
     },
     logout(state) {
       state.token = null
       state.user = null
       localStorage.removeItem("token")
+      localStorage.removeItem("refresh_token")
       localStorage.removeItem("user")
+      authAPI.logout().catch(() => {})
     },
   },
   extraReducers: (builder) => {

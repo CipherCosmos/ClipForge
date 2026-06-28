@@ -2,13 +2,27 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { 
-  Search, Flame, Sparkles, Play, ArrowRight, Clock, Eye, Globe, 
-  RefreshCw, Check, AlertCircle, Sparkle, Copy, BookOpen, 
-  Film, MessageSquare, MapPin, TrendingUp, Music, Users, Layers
+import {
+  Search, Flame, Sparkles, Play, ArrowRight, Clock, Eye, Globe,
+  RefreshCw, Check, AlertCircle, Sparkle, Copy, BookOpen,
+  Film, MessageSquare, MapPin, Music, Users, Layers, Loader2
 } from "lucide-react"
-import { researchAPI, videosAPI } from "@/lib/api"
+import { researchAPI, videosAPI, authAPI } from "@/lib/api"
 import { cn } from "@/lib/utils"
+
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
 
 interface Trend {
   topic: string
@@ -61,47 +75,124 @@ const TONES = [
 ]
 
 const SOURCES = [
-  { id: "google", label: "Google Trends", icon: Globe, color: "text-blue-400 hover:text-blue-300" },
-  { id: "youtube", label: "YouTube Viral", icon: Play, color: "text-red-400 hover:text-red-300" },
-  { id: "reddit", label: "Reddit Hot", icon: MessageSquare, color: "text-orange-400 hover:text-orange-300" },
-  { id: "news", label: "Global News", icon: BookOpen, color: "text-emerald-400 hover:text-emerald-300" },
+  { id: "google", label: "Google Trends", icon: Globe, color: "text-blue-400" },
+  { id: "youtube", label: "YouTube Viral", icon: Play, color: "text-red-400" },
+  { id: "reddit", label: "Reddit Hot", icon: MessageSquare, color: "text-orange-400" },
+  { id: "news", label: "Global News", icon: BookOpen, color: "text-emerald-400" },
+]
+
+const NICHES = [
+  { id: "general", label: "General Trends" },
+  { id: "sports", label: "Sports" },
+  { id: "facts", label: "Amazing Facts" },
+  { id: "cartoon", label: "Cartoons & Anime" },
+  { id: "science", label: "Science & Space" },
+  { id: "tech", label: "Tech & Gadgets" },
+  { id: "code", label: "Programming & Git" },
+  { id: "trading", label: "Stock & Crypto" },
+  { id: "investing", label: "Finance & Investing" },
+]
+
+const MOCK_TRACKS = [
+  { id: "track_1", title: "Cyberpunk Pulse", genre: "Synthwave", duration: "1:02", vibe: "High Energy / Suspense" },
+  { id: "track_2", title: "Lo-Fi Coffee", genre: "Chillhop", duration: "1:30", vibe: "Relaxed / Educational" },
+  { id: "track_3", title: "Epic Cinematic", genre: "Orchestral", duration: "0:58", vibe: "Inspirational / Hype" },
+  { id: "track_4", title: "Trap Beat Drop", genre: "Hip Hop", duration: "1:15", vibe: "Modern / Bold" },
 ]
 
 export default function ResearchPage() {
   const router = useRouter()
   const [trends, setTrends] = useState<Trend[]>([])
   const [loadingTrends, setLoadingTrends] = useState(false)
+  const [defaultGeo, setDefaultGeo] = useState("US")
   const [selectedGeo, setSelectedGeo] = useState("US")
   const [selectedSource, setSelectedSource] = useState("google")
-  
+  const [selectedNiche, setSelectedNiche] = useState("general")
+  const [searchQuery, setSearchQuery] = useState("")
+
   const [selectedTopic, setSelectedTopic] = useState("")
   const [customTopic, setCustomTopic] = useState("")
+  const [selectedTrend, setSelectedTrend] = useState<Trend | null>(null)
   const [selectedTone, setSelectedTone] = useState("viral")
-  
+
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
-  const [activeTab, setActiveTab] = useState("script") // script, strategy, hooks, footage
-  
+  const [activeTab, setActiveTab] = useState("script")
+
   const [crawling, setCrawling] = useState(false)
   const [videos, setVideos] = useState<VideoResult[]>([])
-  const [videoType, setVideoType] = useState("all") // all, shorts, long
-  
+  const [videoType, setVideoType] = useState("all")
+
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [toastType, setToastType] = useState<"success" | "error">("success")
-  
+
   const [generatingId, setGeneratingId] = useState<string | null>(null)
   const [copiedScript, setCopiedScript] = useState(false)
   const [copiedComment, setCopiedComment] = useState(false)
   const [copiedHookIdx, setCopiedHookIdx] = useState<number | null>(null)
 
-  useEffect(() => {
-    loadTrends(selectedGeo, selectedSource)
-  }, [selectedGeo, selectedSource])
+  const [validatingTopic, setValidatingTopic] = useState(false)
+  const [validationReport, setValidationReport] = useState<any | null>(null)
+  const [importingTrend, setImportingTrend] = useState(false)
 
-  const loadTrends = async (geoCode: string, sourceFeed: string) => {
+  const [editedHook, setEditedHook] = useState("")
+  const [editedBody, setEditedBody] = useState("")
+  const [editedCTA, setEditedCTA] = useState("")
+  const [editedComment, setEditedComment] = useState("")
+
+  const [activePreviewUrl, setActivePreviewUrl] = useState<string | null>(null)
+
+  const [playingTrackId, setPlayingTrackId] = useState<string | null>(null)
+  const [selectedMusicId, setSelectedMusicId] = useState<string | null>("track_1")
+
+  const getYouTubeId = (url: string) => {
+    if (!url) return null
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/
+    const match = url.match(regExp)
+    return (match && match[2].length === 11) ? match[2] : null
+  }
+
+  const getTrendImage = (t: Trend) => {
+    if (t.url) {
+      const ytId = getYouTubeId(t.url)
+      if (ytId) {
+        return `https://img.youtube.com/vi/${ytId}/mqdefault.jpg`
+      }
+      try {
+        const domain = new URL(t.url).hostname
+        return `https://www.google.com/s2/favicons?sz=128&domain=${domain}`
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  useEffect(() => {
+    if (analysis) {
+      setEditedHook(analysis.punchy_hook || "")
+      setEditedBody(analysis.script_body || "")
+      setEditedCTA(analysis.call_to_action || "")
+      setEditedComment(analysis.pin_comment || "")
+    }
+  }, [analysis])
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await authAPI.getSettings()
+        if (res.data.research_location) {
+          setDefaultGeo(res.data.research_location)
+          setSelectedGeo(res.data.research_location)
+        }
+      } catch {}
+    })()
+  }, [])
+
+  const loadTrends = async (geoCode: string, sourceFeed: string, nicheCode: string, queryStr = "") => {
     setLoadingTrends(true)
     try {
-      const res = await researchAPI.trends(geoCode, sourceFeed)
+      const res = await researchAPI.trends(geoCode, sourceFeed, nicheCode, queryStr)
       setTrends(res.data.trends || [])
     } catch {
       showToast("Failed to load trending topics", "error")
@@ -110,23 +201,66 @@ export default function ResearchPage() {
     }
   }
 
+  useEffect(() => {
+    loadTrends(selectedGeo, selectedSource, selectedNiche, searchQuery)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGeo, selectedSource, selectedNiche])
+
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToastMessage(msg)
     setToastType(type)
     setTimeout(() => setToastMessage(null), 4000)
   }
 
-  const handleSelectTopic = (topic: string) => {
-    setSelectedTopic(topic)
-    setCustomTopic(topic)
-    analyzeTopic(topic, selectedTone)
+  const validateTopic = async (topic: string, niche: string) => {
+    setValidatingTopic(true)
+    setValidationReport(null)
+    try {
+      const res = await researchAPI.validateTopic(topic, niche)
+      setValidationReport(res.data)
+    } catch {
+      showToast("Failed to run AI validation & fact check", "error")
+    } finally {
+      setValidatingTopic(false)
+    }
+  }
+
+  const handleSelectTopic = (t: Trend) => {
+    setSelectedTopic(t.topic)
+    setCustomTopic(t.topic)
+    setSelectedTrend(t)
+    analyzeTopic(t.topic, selectedTone)
+    validateTopic(t.topic, selectedNiche)
   }
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!customTopic.trim()) return
     setSelectedTopic(customTopic)
+    setSelectedTrend(null)
     analyzeTopic(customTopic, selectedTone)
+    validateTopic(customTopic, selectedNiche)
+  }
+
+  const handleImportTrend = async (topic: string, url?: string) => {
+    setImportingTrend(true)
+    showToast("Analyzing trend & fetching matching video...", "success")
+    try {
+      const res = await researchAPI.importTrend(topic, selectedNiche, "youtube_shorts", url)
+      const video = res.data
+      if (video.progress === 100) {
+        showToast("Cloned processed video instantly! Redirecting to Dashboard...", "success")
+      } else {
+        showToast("One-Click ingestion pipeline started! Redirecting to Dashboard...", "success")
+      }
+      setTimeout(() => {
+        router.push("/app")
+      }, 1500)
+    } catch (err) {
+      showToast("Failed to run One-Click generation for this trend", "error")
+    } finally {
+      setImportingTrend(false)
+    }
   }
 
   const analyzeTopic = async (topic: string, tone: string) => {
@@ -213,9 +347,9 @@ export default function ResearchPage() {
     return parts.map((part, index) => {
       if (part.startsWith("[") && part.endsWith("]")) {
         return (
-          <span 
-            key={index} 
-            className="block my-2 text-xs font-extrabold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-1 rounded w-fit"
+          <span
+            key={index}
+            className="inline-block my-1 mx-1 text-[10px] font-bold uppercase tracking-wider text-brand-400 bg-brand-500/10 border border-brand-500/20 px-2 py-0.5 rounded"
           >
             {part}
           </span>
@@ -239,22 +373,24 @@ export default function ResearchPage() {
     return `${views} views`
   }
 
-  // Radial progress calculations
   const radius = 32
   const circumference = 2 * Math.PI * radius
-  const strokeDashoffset = analysis 
-    ? circumference - (analysis.viral_potential * circumference) 
+  const strokeDashoffset = analysis
+    ? circumference - (analysis.viral_potential * circumference)
     : circumference
 
   return (
-    <div className="relative animate-fade-in space-y-8 pb-10">
-      {/* Toast feedback */}
+    <div className="relative animate-fade-in space-y-12 pb-16 px-4 md:px-6 max-w-7xl mx-auto">
+      {/* Background Neon Glows */}
+      <div className="absolute top-[-10%] left-[5%] -z-10 h-[500px] w-[500px] rounded-full bg-brand-500/5 blur-[120px] pointer-events-none" />
+      <div className="absolute top-[20%] right-[5%] -z-10 h-[400px] w-[400px] rounded-full bg-purple-500/5 blur-[100px] pointer-events-none" />
+
       {toastMessage && (
         <div
           className={cn(
             "fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold shadow-lg backdrop-blur-md border animate-slide-up",
-            toastType === "success" 
-              ? "bg-emerald-950/80 text-emerald-300 border-emerald-500/30" 
+            toastType === "success"
+              ? "bg-emerald-950/80 text-emerald-300 border-emerald-500/30"
               : "bg-red-950/80 text-red-300 border-red-500/30"
           )}
         >
@@ -263,525 +399,969 @@ export default function ResearchPage() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-          <Sparkle className="text-brand-400 fill-brand-400/20" size={24} />
-          Trend Research & Content Factory
-        </h1>
-        <p className="text-sm text-slate-400 max-w-3xl">
-          Track live feeds across multiple platforms, engineer growth-optimized AI script blueprints with director visual cues using local models, and spin up hot shorts or reels with one click.
-        </p>
+      {/* Spacious Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 pb-6 border-b border-border/40">
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10 text-brand-400">
+              <Sparkle className="size-5 fill-current animate-pulse-glow" />
+            </div>
+            <h1 className="text-3xl font-black tracking-tight bg-gradient-to-r from-brand-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent sm:text-4xl">
+              Research & Trends Laboratory
+            </h1>
+          </div>
+          <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
+            Uncover high-traffic viral ideas, perform AI credibility fact-checking, analyze keyword dynamics, and generate fully visual, video-ready storyboards in real time.
+          </p>
+        </div>
+        
+        {/* Status Indicators */}
+        <div className="flex flex-wrap gap-3">
+          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-full text-[11px] font-bold text-emerald-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+            Ollama AI: Active
+          </div>
+          <div className="flex items-center gap-2 bg-brand-500/10 border border-brand-500/20 px-3 py-1.5 rounded-full text-[11px] font-bold text-brand-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
+            Trends Engine: Online
+          </div>
+        </div>
       </div>
 
-      {/* Main Layout Grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        
-        {/* Left Side: Trends Panel */}
-        <div className="lg:col-span-1 flex flex-col gap-4 bg-slate-900/40 border border-slate-800/80 rounded-xl p-4 backdrop-blur-md h-fit">
-          <div className="flex flex-col gap-3">
-            
-            {/* Feed Tabs Selector */}
-            <div className="grid grid-cols-2 gap-2">
-              {SOURCES.map((src) => {
-                const Icon = src.icon
-                const active = selectedSource === src.id
+      {/* Premium Floating Search Console */}
+      <div className="max-w-4xl mx-auto pt-4">
+        <Card className="border border-white/5 bg-card/30 backdrop-blur-xl p-8 shadow-[0_0_50px_rgba(99,102,241,0.05)] rounded-2xl space-y-6">
+          <div className="space-y-1">
+            <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">AI Insight Generator</h3>
+            <p className="text-xs text-muted-foreground">What topic or trend are you exploring today? Let our local AI map out a complete video concept.</p>
+          </div>
+          
+          <form onSubmit={handleCustomSubmit} className="flex flex-col md:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground/50 size-5" />
+              <Input
+                type="text"
+                placeholder="Enter any trend topic, concept prompt, or news headline (e.g. 'SpaceX Mars Mission updates')..."
+                value={customTopic}
+                onChange={(e) => setCustomTopic(e.target.value)}
+                className="pl-12 h-14 text-base bg-background/50 border-border focus:border-brand-500/50 rounded-xl"
+              />
+            </div>
+            <Button
+              type="submit"
+              disabled={analyzing || !customTopic.trim()}
+              className="h-14 px-8 font-bold text-base shadow-lg bg-brand-500 hover:bg-brand-600 hover:shadow-brand-500/20 text-white rounded-xl transition-all duration-300 active:scale-98 shrink-0"
+            >
+              {analyzing ? (
+                <>
+                  <Loader2 className="animate-spin mr-2 size-5" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  Analyze Concept
+                  <ArrowRight size={18} className="ml-2" />
+                </>
+              )}
+            </Button>
+          </form>
+
+          {/* Tone blueprint */}
+          <div className="space-y-3 pt-4 border-t border-border/40">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">Script Tone Blueprint</label>
+            <div className="flex flex-wrap gap-2.5">
+              {TONES.map((t) => {
+                const Icon = t.icon
+                const active = selectedTone === t.id
                 return (
-                  <button
-                    key={src.id}
-                    onClick={() => {
-                      setSelectedSource(src.id)
-                      setTrends([])
-                    }}
+                  <Button
+                    key={t.id}
+                    type="button"
+                    variant={active ? "default" : "outline"}
+                    onClick={() => setSelectedTone(t.id)}
                     className={cn(
-                      "flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold transition-all hover:scale-[1.02]",
-                      active
-                        ? "bg-slate-800 border-slate-700 text-white font-bold"
-                        : "bg-slate-950/40 border-slate-800/40 text-slate-400 hover:text-slate-200"
+                      "flex items-center gap-2 text-xs font-semibold px-4 h-9 bg-background/40 border-border hover:bg-muted/30 rounded-lg transition-all",
+                      active && "bg-brand-500 text-white border-brand-500 shadow-md hover:bg-brand-600"
                     )}
                   >
-                    <Icon size={14} className={active ? src.color : "text-slate-500"} />
-                    <span>{src.label}</span>
-                  </button>
+                    <Icon size={14} className={cn(active ? "text-white" : "text-muted-foreground")} />
+                    {t.label}
+                  </Button>
                 )
               })}
             </div>
-
-            <div className="flex items-center justify-between border-t border-slate-800/60 pt-3">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Flame size={12} className="text-amber-400" />
-                Live Trends
-              </span>
-              <div className="flex items-center gap-2">
-                {/* Geo Selector - Only show for Google/News which support region filtering */}
-                {(selectedSource === "google" || selectedSource === "news") && (
-                  <div className="relative">
-                    <MapPin className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" size={10} />
-                    <select
-                      value={selectedGeo}
-                      onChange={(e) => setSelectedGeo(e.target.value)}
-                      className="text-[10px] bg-slate-950 border border-slate-800 text-slate-400 rounded pl-5 pr-2 py-0.5 focus:outline-none transition-all font-semibold cursor-pointer"
-                    >
-                      {REGIONS.map((r) => (
-                        <option key={r.code} value={r.code}>
-                          {r.code}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <button 
-                  onClick={() => loadTrends(selectedGeo, selectedSource)} 
-                  disabled={loadingTrends}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200 disabled:opacity-50"
-                >
-                  <RefreshCw size={12} className={cn(loadingTrends && "animate-spin")} />
-                </button>
-              </div>
-            </div>
-
           </div>
+        </Card>
+      </div>
 
-          {loadingTrends ? (
-            <div className="space-y-2 py-4">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="h-9 w-full bg-slate-800/20 animate-pulse rounded-lg" />
-              ))}
-            </div>
-          ) : trends.length === 0 ? (
-            <div className="text-center py-10">
-              <p className="text-xs text-slate-500">No live trends retrieved. Try refreshing.</p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
-              {trends.map((t, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSelectTopic(t.topic)}
-                  className={cn(
-                    "flex flex-col items-start gap-1 rounded-lg px-3 py-2 text-left text-xs border transition-all duration-200 hover:bg-slate-800/20",
-                    selectedTopic === t.topic
-                      ? "bg-brand-500/10 border-brand-500/40 text-brand-400 font-bold"
-                      : "bg-slate-950/20 border-slate-800/40 text-slate-300 hover:border-slate-700/60"
-                  )}
-                >
-                  <span className="w-full font-bold line-clamp-2 leading-snug">{t.topic}</span>
-                  <span className="text-[9px] text-slate-500 font-semibold">{t.traffic}</span>
-                </button>
-              ))}
-            </div>
-          )}
+      {/* Trends Feed & Aggregator Section */}
+      <div className="space-y-6 pt-4">
+        <div className="space-y-2">
+          <h2 className="text-xl font-extrabold text-foreground flex items-center gap-2">
+            <Flame size={20} className="text-amber-500 animate-pulse" />
+            Trends Aggregator Hub
+          </h2>
+          <p className="text-xs text-muted-foreground">Select a trend source feed and filters below to fetch live popular data.</p>
         </div>
 
-        {/* Right Side: Analysis & Footage Details */}
-        <div className="lg:col-span-2 space-y-6">
-          
-          {/* Custom Search Form & Tone Setup */}
-          <div className="space-y-4 bg-slate-900/50 border border-slate-800/80 p-4 rounded-xl backdrop-blur-md">
-            <form onSubmit={handleCustomSubmit} className="flex gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                <input
-                  type="text"
-                  placeholder="Enter any viral idea, trend topic, or news headline..."
-                  value={customTopic}
-                  onChange={(e) => setCustomTopic(e.target.value)}
-                  className="w-full bg-slate-950/80 border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500 transition-all font-semibold"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={analyzing || !customTopic.trim()}
-                className="btn-primary px-5 py-2 font-bold shadow-lg shadow-brand-500/25 disabled:opacity-50 shrink-0 text-sm"
-              >
-                {analyzing ? (
-                  <>
-                    <RefreshCw size={14} className="animate-spin mr-1.5" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    Analyze
-                    <ArrowRight size={14} className="ml-1.5" />
-                  </>
-                )}
-              </button>
-            </form>
+        {/* Source Feed Cards Selector */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {SOURCES.map((source) => {
+            const Icon = source.icon
+            const active = selectedSource === source.id
+            const colorClass = source.color
+            
+            // Description for each source
+            let desc = ""
+            if (source.id === "google") desc = "High-volume search keywords & news RSS"
+            else if (source.id === "youtube") desc = "Top trending shorts & videos"
+            else if (source.id === "reddit") desc = "Hot submissions from key subreddits"
+            else if (source.id === "news") desc = "Global headlines and keyword news"
 
-            {/* Script Tone Selectors */}
-            <div className="flex flex-col gap-2 pt-2 border-t border-slate-800/40">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Select AI Script Tone/Style</p>
-              <div className="flex flex-wrap gap-2">
-                {TONES.map((t) => {
-                  const Icon = t.icon
-                  const active = selectedTone === t.id
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setSelectedTone(t.id)}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all duration-200 hover:scale-[1.02]",
-                        active
-                          ? `${t.color} font-extrabold ring-1 ring-offset-1 ring-offset-slate-950 ring-brand-500/40`
-                          : "bg-slate-950/40 border-slate-800/60 text-slate-400 hover:text-slate-200"
-                      )}
-                    >
-                      <Icon size={12} />
-                      {t.label}
-                    </button>
-                  )
-                })}
+            return (
+              <Card
+                key={source.id}
+                onClick={() => setSelectedSource(source.id)}
+                className={cn(
+                  "cursor-pointer p-5 border bg-card/25 hover:bg-card/50 transition-all duration-300 rounded-xl relative overflow-hidden flex flex-col justify-between h-[120px]",
+                  active ? "border-brand-500 shadow-[0_0_20px_rgba(99,102,241,0.1)] bg-brand-500/[0.02]" : "border-border"
+                )}
+              >
+                <div className="flex justify-between items-start">
+                  <div className="flex items-center gap-2">
+                    <Icon className={cn("size-5", colorClass)} />
+                    <span className="font-bold text-sm text-foreground">{source.label}</span>
+                  </div>
+                  {active && (
+                    <span className="h-2 w-2 rounded-full bg-brand-500 animate-pulse" />
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-snug mt-2">
+                  {desc}
+                </p>
+                <div className="mt-3 flex items-center justify-between">
+                  <span className="text-[9px] font-bold text-brand-400 uppercase tracking-widest">Connect</span>
+                  <span className="text-[9px] bg-muted px-2 py-0.5 rounded text-muted-foreground font-semibold">Feed: OK</span>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+
+        {/* Filter & Live Search Controls Bar */}
+        <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between gap-4 p-5 border border-border/40 bg-card/25 backdrop-blur-md rounded-xl">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 flex-1">
+            {/* Live Search input */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground/50 size-4" />
+              <Input
+                type="text"
+                placeholder="Find real-time keywords or custom search trends..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    loadTrends(selectedGeo, selectedSource, selectedNiche, searchQuery)
+                  }
+                }}
+                className="pl-10 h-10 bg-background/50 border-border text-xs rounded-lg"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => {
+                    setSearchQuery("")
+                    loadTrends(selectedGeo, selectedSource, selectedNiche, "")
+                  }}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground hover:text-foreground"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider shrink-0">Region:</span>
+                <Select value={selectedGeo} onValueChange={(v) => v !== null && setSelectedGeo(v)}>
+                  <SelectTrigger className="text-xs h-10 bg-background border-border px-3 w-[150px] rounded-lg">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REGIONS.map((r) => (
+                      <SelectItem key={r.code} value={r.code}>{r.name} ({r.code})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider shrink-0">Niche:</span>
+                <Select value={selectedNiche} onValueChange={(v) => v !== null && setSelectedNiche(v)}>
+                  <SelectTrigger className="text-xs h-10 bg-background border-border px-3 w-[180px] rounded-lg">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {NICHES.map((n) => (
+                      <SelectItem key={n.id} value={n.id}>{n.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
 
-          {/* Analysis Loading View */}
-          {analyzing && (
-            <div className="card flex flex-col items-center py-24 bg-slate-900/20">
-              <div className="mb-4 h-10 w-10 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
-              <h3 className="mb-1 text-sm font-semibold text-slate-300">AI Trend Engineer Analyzing Topic</h3>
-              <p className="text-xs text-slate-500">Creating custom scripts, hooks, growth metrics, and visual B-roll prompts...</p>
-            </div>
-          )}
+          <Button
+            className="h-10 bg-brand-500 hover:bg-brand-600 text-white shrink-0 text-xs font-bold px-5 gap-2 rounded-lg"
+            onClick={() => loadTrends(selectedGeo, selectedSource, selectedNiche, searchQuery)}
+            disabled={loadingTrends}
+          >
+            <RefreshCw size={14} className={cn(loadingTrends && "animate-spin")} />
+            Search & Sync Trends
+          </Button>
+        </div>
 
-          {!analyzing && !analysis && (
-            <div className="card flex flex-col items-center py-32 bg-slate-900/10 border border-dashed border-slate-800">
-              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-slate-600">
-                <Sparkles size={24} />
-              </div>
-              <h3 className="mb-1 text-sm font-semibold text-slate-400">Select a trend topic or search above</h3>
-              <p className="text-xs text-slate-500 max-w-sm text-center">
-                Let local AI create high-engagement script formats, viral hooks, tags, descriptions, and crawling parameters instantly.
-              </p>
-            </div>
-          )}
+        {/* Live Trends Deck List Layout */}
+        {loadingTrends ? (
+          <div className="space-y-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="border border-border/40 bg-card/10 animate-pulse h-[90px] rounded-xl" />
+            ))}
+          </div>
+        ) : trends.length === 0 ? (
+          <Card className="border border-dashed border-border bg-card/10 p-16 text-center rounded-xl">
+            <p className="text-sm text-muted-foreground">No live trends retrieved. Try searching for a different keyword or toggling options.</p>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {trends.slice(0, 15).map((t, idx) => {
+              const active = selectedTopic === t.topic
+              const imgUrl = getTrendImage(t)
+              const isYt = !!getYouTubeId(t.url || "")
 
-          {analysis && (
-            <div className="space-y-6">
-              
-              {/* Detailed Multi-Tab Dashboard */}
-              <div className="relative group overflow-hidden rounded-xl border border-slate-800 bg-slate-900/30 p-5 backdrop-blur-md">
-                
-                {/* Header Information */}
-                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800/80 pb-4 mb-4">
-                  <div>
-                    <span className="badge-slate bg-brand-500/10 text-brand-400 border border-brand-500/20 text-[10px] font-bold uppercase tracking-wider mb-1.5 inline-block">
-                      AI Blueprint ({TONES.find(t => t.id === selectedTone)?.label})
-                    </span>
-                    <h3 className="text-base font-extrabold text-white leading-tight">
-                      {selectedTopic}
-                    </h3>
+              return (
+                <div
+                  key={idx}
+                  onClick={() => handleSelectTopic(t)}
+                  className={cn(
+                    "group/trend border bg-card/25 backdrop-blur-md transition-all duration-300 p-5 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 hover:border-brand-500/30 hover:bg-card/50 hover:shadow-md cursor-pointer",
+                    active ? "border-brand-500/60 bg-brand-500/[0.02] shadow-[0_0_20px_rgba(99,102,241,0.05)]" : "border-border/60"
+                  )}
+                >
+                  <div className="flex items-center gap-5 flex-1 min-w-0">
+                    {/* Preview Image/Icon Container */}
+                    <div className="relative w-24 h-16 sm:w-28 sm:h-18 rounded-lg overflow-hidden border border-border bg-muted/20 shrink-0 flex items-center justify-center">
+                      {imgUrl ? (
+                        isYt ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={imgUrl} alt="Video Preview" className="w-full h-full object-cover" />
+                        ) : (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={imgUrl} alt="Favicon Preview" className="size-8 object-contain" />
+                        )
+                      ) : (
+                        <Globe className="size-6 text-muted-foreground/45" />
+                      )}
+                      {isYt && (
+                        <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+                          <Play size={14} className="text-white fill-current" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Topic text and tags */}
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <h3 className="text-sm sm:text-base font-bold text-foreground leading-snug break-words group-hover/trend:text-brand-400 transition-colors">
+                        {t.topic}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-brand-400 bg-brand-500/10 px-2 py-0.5 rounded">
+                          {t.traffic}
+                        </span>
+                        <span>&bull;</span>
+                        <span className="flex items-center gap-1 font-medium capitalize">
+                          <span className="size-1.5 rounded-full bg-indigo-500" />
+                          {t.source || selectedSource}
+                        </span>
+                        <span>&bull;</span>
+                        <span className="flex items-center gap-1 font-medium">
+                          <MapPin size={11} /> {selectedGeo}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Viral Score Circular Badge */}
-                  <div className="flex items-center gap-3 bg-slate-950/40 border border-slate-800/80 px-3 py-1.5 rounded-xl shrink-0">
-                    <div className="relative h-12 w-12 flex items-center justify-center">
+                  {/* Actions right side */}
+                  <div className="flex items-center gap-3 shrink-0 w-full md:w-auto justify-end md:justify-start pt-3 md:pt-0 border-t border-border/10 md:border-t-0">
+                    {t.url && (
+                      <a
+                        href={t.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-muted/20 border border-border/60 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
+                        title="View Original Link"
+                      >
+                        <Globe size={13} />
+                        <span>Visit Link</span>
+                      </a>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleImportTrend(t.topic, t.url)
+                      }}
+                      disabled={importingTrend}
+                      className="text-xs font-extrabold uppercase h-9 px-4 shadow-md bg-brand-500 hover:bg-brand-600 text-white rounded-lg gap-1.5"
+                    >
+                      <Sparkles size={13} className="fill-current" />
+                      Ingest Video
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Analysis Section loading state */}
+      {analyzing && (
+        <Card className="border border-white/5 bg-card/20 py-32 text-center animate-pulse-glow max-w-4xl mx-auto rounded-2xl shadow-xl">
+          <CardContent className="flex flex-col items-center space-y-5">
+            <Loader2 className="h-10 w-10 animate-spin text-brand-400" />
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-foreground">AI Concept Studio Analyzing</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
+                Scanning multi-source databases, scoring virality dimensions, and compiling verification index fact checks via local LLM...
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Visual Workspace Dashboard */}
+      {analysis && !analyzing && (
+        <div className="space-y-8 animate-scale-in pt-4">
+          
+          {/* Active Analysis Section Header */}
+          <Card className="border border-white/5 bg-card/30 backdrop-blur-xl overflow-hidden p-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-8 shadow-xl rounded-2xl">
+            <div className="space-y-3 flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-brand-500/10 text-brand-400 border-brand-500/25 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md">
+                  Active Analysis Concept
+                </Badge>
+                <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/25 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md">
+                  Target Tone: {TONES.find(t => t.id === selectedTone)?.label}
+                </Badge>
+              </div>
+              <h2 className="text-2xl font-black text-foreground leading-tight">{selectedTopic}</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
+                The AI concept report and storyboard outline are generated below. You can edit the attention hook, body narratives, or trigger our one-click video ingest pipeline directly.
+              </p>
+            </div>
+            
+            <Button
+              onClick={() => handleImportTrend(selectedTopic, selectedTrend?.url)}
+              disabled={importingTrend}
+              size="lg"
+              className="text-sm h-12 font-bold shadow-lg bg-brand-500 hover:bg-brand-600 text-white transition-all duration-300 rounded-xl px-6 hover:shadow-brand-500/20 active:scale-98 shrink-0 w-full md:w-auto"
+            >
+              {importingTrend ? (
+                <>
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Generating clips...
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} className="fill-current mr-2" />
+                  One-Click Auto-Generate
+                </>
+              )}
+            </Button>
+          </Card>
+
+          {/* Dual-Column Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 md:gap-10 pt-4">
+            
+            {/* Left Column: AI Diagnostics & Fact-Check */}
+            <div className="lg:col-span-5 space-y-8">
+              
+              {/* Viral Potential Gauge Card */}
+              <Card className="border border-white/5 bg-card/25 backdrop-blur-md p-6 rounded-2xl shadow-md space-y-6">
+                <div className="flex items-center justify-between border-b border-border/40 pb-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                      <Flame size={16} className="text-brand-400" />
+                      Virality Analysis
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">Ollama evaluation of engagement factors.</p>
+                  </div>
+                  
+                  <Badge className="bg-brand-500/10 text-brand-400 border-brand-500/25 text-[9px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded">
+                    Score: {Math.round(analysis.viral_potential * 100)}%
+                  </Badge>
+                </div>
+                
+                <div className="flex items-center justify-center py-4 bg-muted/10 border border-border/30 rounded-xl">
+                  <div className="flex items-center gap-6">
+                    <div className="relative size-20 flex items-center justify-center shrink-0">
                       <svg className="absolute transform -rotate-90 w-full h-full">
+                        <circle cx="40" cy="40" r="34" className="text-border/50" strokeWidth="6" stroke="currentColor" fill="transparent" />
                         <circle
-                          cx="24"
-                          cy="24"
-                          r="20"
-                          className="text-slate-800"
-                          strokeWidth="3.5"
-                          stroke="currentColor"
-                          fill="transparent"
-                        />
-                        <circle
-                          cx="24"
-                          cy="24"
-                          r="20"
+                          cx="40"
+                          cy="40"
+                          r="34"
                           className="text-brand-500"
-                          strokeWidth="3.5"
-                          strokeDasharray={circumference}
-                          strokeDashoffset={strokeDashoffset}
+                          strokeWidth="6"
+                          strokeDasharray={2 * Math.PI * 34}
+                          strokeDashoffset={(2 * Math.PI * 34) - (analysis.viral_potential * (2 * Math.PI * 34))}
                           strokeLinecap="round"
                           stroke="currentColor"
                           fill="transparent"
                         />
                       </svg>
-                      <span className="text-[10px] font-extrabold text-brand-400">
-                        {Math.round(analysis.viral_potential * 100)}%
+                      <span className="text-base font-black text-brand-400">{Math.round(analysis.viral_potential * 100)}%</span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-foreground">Highly Viral Potential</p>
+                      <p className="text-[10px] text-muted-foreground leading-normal max-w-[180px]">
+                        This topic holds strong interest hooks and is likely to generate highly shareable clip segments.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score breakdown metrics */}
+                <div className="space-y-4">
+                  {[
+                    { label: "Hook Potential", val: analysis.viral_potential * 0.95 },
+                    { label: "Emotion Intensity", val: analysis.viral_potential * 0.88 },
+                    { label: "Engagement Gap", val: analysis.viral_potential * 0.92 },
+                    { label: "Trend Salience", val: analysis.viral_potential * 1.05 > 1 ? 1 : analysis.viral_potential * 1.05 }
+                  ].map((metric, i) => (
+                    <div key={i} className="space-y-1">
+                      <div className="flex justify-between text-[11px] font-bold">
+                        <span className="text-muted-foreground">{metric.label}</span>
+                        <span className="text-foreground">{Math.round(metric.val * 100)}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-border/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-brand-500 rounded-full"
+                          style={{ width: `${metric.val * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+
+              {/* AI Credibility validation Report */}
+              {(validatingTopic || validationReport) && (
+                <Card className="border border-white/5 bg-card/25 backdrop-blur-md overflow-hidden rounded-2xl shadow-md">
+                  <div className="p-6 border-b border-border/40 flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-foreground flex items-center gap-2">
+                        <Layers size={16} className="text-brand-400" />
+                        AI Credibility Check
+                      </h3>
+                      <p className="text-[10px] text-muted-foreground">Scans keywords, statements, and source claims.</p>
+                    </div>
+                    {validationReport && (
+                      <span className={cn(
+                        "text-[9px] font-extrabold px-3 py-1 rounded-full border uppercase tracking-wider",
+                        validationReport.is_valid ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                      )}>
+                        {validationReport.is_valid ? "Verifiably Credible" : "Flags Detected"}
                       </span>
-                    </div>
-                    <div>
-                      <p className="text-[8px] text-slate-500 font-bold uppercase tracking-wider">Viral Score</p>
-                      <p className="text-xs font-bold text-white">Highly Shareable</p>
-                    </div>
+                    )}
                   </div>
-                </div>
-
-                {/* Dashboard Tabs Navigation */}
-                <div className="flex gap-1 border-b border-slate-850 pb-2 mb-4 overflow-x-auto">
-                  <button
-                    onClick={() => setActiveTab("script")}
-                    className={cn(
-                      "text-xs font-bold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap",
-                      activeTab === "script" ? "bg-brand-500/10 text-brand-400" : "text-slate-400 hover:text-slate-200"
-                    )}
-                  >
-                    Script Blueprint
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("strategy")}
-                    className={cn(
-                      "text-xs font-bold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap",
-                      activeTab === "strategy" ? "bg-brand-500/10 text-brand-400" : "text-slate-400 hover:text-slate-200"
-                    )}
-                  >
-                    Growth Strategy
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("hooks")}
-                    className={cn(
-                      "text-xs font-bold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap",
-                      activeTab === "hooks" ? "bg-brand-500/10 text-brand-400" : "text-slate-400 hover:text-slate-200"
-                    )}
-                  >
-                    Hook Variations
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("footage")}
-                    className={cn(
-                      "text-xs font-bold px-3 py-1.5 rounded-lg transition-all whitespace-nowrap",
-                      activeTab === "footage" ? "bg-brand-500/10 text-brand-400" : "text-slate-400 hover:text-slate-200"
-                    )}
-                  >
-                    Footage Finder ({videos.length})
-                  </button>
-                </div>
-
-                {/* Tab: Script Outline */}
-                {activeTab === "script" && (
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <Film size={12} /> Script Storyboard & Cues
-                      </p>
-                      <button
-                        onClick={() => copyToClipboard(`[Hook]\n${analysis.punchy_hook}\n\n[Body]\n${analysis.script_body}\n\n[CTA]\n${analysis.call_to_action}`, "script")}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-brand-400 hover:text-brand-300 transition-all"
-                      >
-                        <Copy size={12} />
-                        {copiedScript ? "Copied!" : "Copy Full Script"}
-                      </button>
-                    </div>
-
-                    <div className="bg-slate-950/40 p-4 rounded-xl border border-slate-800/60 space-y-4 max-h-[360px] overflow-y-auto">
-                      <div>
-                        <span className="text-[9px] font-extrabold tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2 py-0.5 rounded uppercase">Attention Hook (0-3s)</span>
-                        <p className="text-sm font-extrabold text-white mt-1.5 border-l-2 border-rose-500/60 pl-3 leading-snug">
-                          {analysis.punchy_hook}
-                        </p>
+                  
+                  <CardContent className="p-6 space-y-6">
+                    {validatingTopic ? (
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground py-6 justify-center">
+                        <Loader2 size={16} className="animate-spin text-brand-400" />
+                        Generating verification index reports...
                       </div>
-                      
-                      <div className="border-t border-slate-850 pt-3">
-                        <span className="text-[9px] font-extrabold tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-0.5 rounded uppercase">Script Body & B-Roll Cues</span>
-                        <div className="text-xs text-slate-300 leading-relaxed mt-2 whitespace-pre-wrap font-medium">
-                          {formatScriptBody(analysis.script_body)}
-                        </div>
-                      </div>
-
-                      <div className="border-t border-slate-850 pt-3">
-                        <span className="text-[9px] font-extrabold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded uppercase">Growth call to action</span>
-                        <p className="text-xs font-bold text-emerald-400 mt-1.5 pl-3 border-l-2 border-emerald-500/60">
-                          {analysis.call_to_action}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Tab: Growth Strategy */}
-                {activeTab === "strategy" && (
-                  <div className="grid gap-5 md:grid-cols-2">
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <Layers size={12} className="text-brand-400" /> Viral Triggers
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {analysis.viral_triggers && analysis.viral_triggers.map((trigger, idx) => (
-                            <span key={idx} className="text-[10px] font-bold px-2 py-1 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400">
-                              {trigger}
-                            </span>
+                    ) : validationReport ? (
+                      <div className="space-y-6">
+                        {/* 3 concentric progress rings with spacing */}
+                        <div className="grid grid-cols-3 gap-3">
+                          {[
+                            { label: "Credibility", val: validationReport.credibility_score, color: "text-emerald-400 stroke-emerald-400" },
+                            { label: "Niche Fit", val: validationReport.niche_alignment, color: "text-purple-400 stroke-purple-400" },
+                            { label: "Viral Power", val: validationReport.virality_score, color: "text-pink-400 stroke-pink-400" },
+                          ].map((gauge, i) => (
+                            <div key={i} className="bg-muted/10 border border-border/30 rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                              <div className="relative size-12 flex items-center justify-center mb-2">
+                                <svg className="absolute transform -rotate-90 w-full h-full">
+                                  <circle cx="24" cy="24" r="20" className="text-border/50" strokeWidth="3" stroke="currentColor" fill="transparent" />
+                                  <circle
+                                    cx="24"
+                                    cy="24"
+                                    r="20"
+                                    className={gauge.color.split(" ")[1]}
+                                    strokeWidth="3"
+                                    strokeDasharray={2 * Math.PI * 20}
+                                    strokeDashoffset={(2 * Math.PI * 20) - (gauge.val * (2 * Math.PI * 20))}
+                                    strokeLinecap="round"
+                                    stroke="currentColor"
+                                    fill="transparent"
+                                  />
+                                </svg>
+                                <span className={cn("text-[10px] font-black", gauge.color.split(" ")[0])}>
+                                  {Math.round(gauge.val * 100)}%
+                                </span>
+                              </div>
+                              <p className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider">{gauge.label}</p>
+                            </div>
                           ))}
                         </div>
-                      </div>
 
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <Users size={12} className="text-purple-400" /> Targeted Audience
-                        </p>
-                        <p className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 font-medium">
-                          {analysis.target_audience}
-                        </p>
-                      </div>
+                        {/* Factual report details */}
+                        <div className="space-y-4 pt-2">
+                          <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Fact-Check Summary Report</p>
+                            <p className="text-xs text-foreground bg-muted/10 border border-border/30 p-4 rounded-xl leading-relaxed font-medium">
+                              {validationReport.fact_check_report}
+                            </p>
+                          </div>
 
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <Music size={12} className="text-sky-400" /> Music Vibe & Audio Vibe
-                        </p>
-                        <p className="text-xs text-slate-300 bg-slate-950/40 border border-slate-800/40 rounded-lg p-3 font-medium">
-                          {analysis.audio_music_recommendation}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                          <MessageSquare size={12} className="text-rose-400" /> Suggested Pin Comment (Engagement-Bait)
-                        </p>
-                        <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800/40 space-y-3">
-                          <p className="text-xs text-slate-300 italic font-semibold leading-relaxed">
-                            &quot;{analysis.pin_comment}&quot;
-                          </p>
-                          <button
-                            onClick={() => copyToClipboard(analysis.pin_comment, "comment")}
-                            className="flex items-center gap-1 text-[10px] font-bold text-brand-400 hover:text-brand-300 mt-1 transition-all"
-                          >
-                            <Copy size={10} />
-                            {copiedComment ? "Copied!" : "Copy Pinned Comment"}
-                          </button>
+                          <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Factual assessment</p>
+                            <p className="text-xs text-foreground bg-muted/10 border border-border/30 p-4 rounded-xl leading-relaxed font-medium">
+                              {validationReport.reason}
+                            </p>
+                          </div>
                         </div>
-                      </div>
 
-                      <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Viral Hashtags</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {analysis.hashtags.map((h, i) => (
-                            <span key={i} className="text-[10px] font-semibold px-2.5 py-1 rounded-md bg-brand-900/10 border border-brand-800/20 text-brand-400">
-                              #{h.replace("#", "")}
-                            </span>
-                          ))}
-                        </div>
+                        {/* Statement analysis logs */}
+                        {validationReport.claims && validationReport.claims.length > 0 && (
+                          <div className="space-y-3 pt-2">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Statement analysis logs</p>
+                            <div className="grid gap-3 max-h-[220px] overflow-y-auto pr-1">
+                              {validationReport.claims.map((c: any, i: number) => (
+                                <div key={i} className="bg-muted/10 border border-border/30 p-4 rounded-xl text-xs space-y-2">
+                                  <div className="flex justify-between items-start gap-3">
+                                    <span className="font-bold text-foreground leading-tight">{c.claim}</span>
+                                    <span className={cn(
+                                      "text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded border tracking-wider shrink-0",
+                                      c.status === "Verified" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                    )}>
+                                      {c.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-muted-foreground italic leading-relaxed text-[11px]">{c.verdict}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </div>
-                )}
+                    ) : null}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
 
-                {/* Tab: Hook Variations */}
-                {activeTab === "hooks" && (
-                  <div className="space-y-4">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                      <Sparkles size={12} className="text-rose-400" /> A/B Hook Variations (Use for Large Centered Title overlays)
-                    </p>
-                    <div className="space-y-3">
-                      {analysis.hook_variations && analysis.hook_variations.map((hook, idx) => (
-                        <div 
-                          key={idx} 
-                          className="flex items-center justify-between gap-3 bg-slate-950/40 p-3.5 rounded-lg border border-slate-800/80 transition-all hover:border-slate-700"
+            {/* Right Column: Creative Workbench & Editor */}
+            <div className="lg:col-span-7 space-y-8">
+              <Card className="border border-white/5 bg-card/25 backdrop-blur-md overflow-hidden rounded-2xl shadow-md">
+                <Tabs value={activeTab} onValueChange={(v) => v !== null && setActiveTab(v)} className="w-full">
+                  <div className="border-b border-border/40 bg-muted/10 px-6 pt-1">
+                    <TabsList className="bg-transparent gap-4 h-12 border-0 p-0">
+                      {[
+                        { value: "script", label: "Script Teleprompter" },
+                        { value: "strategy", label: "Channel Strategy" },
+                        { value: "hooks", label: "Hooks variations" },
+                        { value: "footage", label: `Footage results (${videos.length})` },
+                      ].map((tab) => (
+                        <TabsTrigger
+                          key={tab.value}
+                          value={tab.value}
+                          className="h-12 text-xs font-semibold rounded-none border-b-2 border-transparent data-[state=active]:border-brand-500 data-[state=active]:text-foreground bg-transparent px-2 py-1 data-[state=active]:shadow-none data-[state=active]:bg-transparent transition-all"
                         >
-                          <p className="text-xs font-bold text-slate-200">{hook}</p>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(hook)
-                              setCopiedHookIdx(idx)
-                              showToast("Hook variation copied to clipboard", "success")
-                              setTimeout(() => setCopiedHookIdx(null), 2000)
-                            }}
-                            className="p-1.5 hover:bg-slate-800 rounded-md text-slate-400 hover:text-slate-200 transition-all shrink-0"
-                          >
-                            {copiedHookIdx === idx ? (
-                              <Check size={12} className="text-emerald-400" />
-                            ) : (
-                              <Copy size={12} />
-                            )}
-                          </button>
-                        </div>
+                          {tab.label}
+                        </TabsTrigger>
                       ))}
-                    </div>
+                    </TabsList>
                   </div>
-                )}
 
-                {/* Tab: Footage Finder (YouTube Crawler) */}
-                {activeTab === "footage" && (
-                  <div className="space-y-4">
-                    
-                    {/* Duration filter options */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-850 pb-2.5">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <Globe size={12} className="text-emerald-400" /> Web Crawler Source Clips
-                      </p>
-                      
-                      <div className="flex gap-1 bg-slate-950/60 p-0.5 rounded-lg border border-slate-850">
-                        {["all", "shorts", "long"].map((filter) => (
-                          <button
-                            key={filter}
-                            onClick={() => handleVideoTypeChange(filter)}
-                            className={cn(
-                              "text-[9px] font-extrabold px-2.5 py-1 rounded uppercase transition-all",
-                              videoType === filter ? "bg-slate-800 text-slate-200" : "text-slate-500 hover:text-slate-350"
-                            )}
-                          >
-                            {filter === "all" ? "All Video" : filter === "shorts" ? "Shorts (<60s)" : "Long (>60s)"}
-                          </button>
-                        ))}
+                  <div className="p-0">
+                    {/* Script Blueprint Tab */}
+                    <TabsContent value="script" className="space-y-6 p-6 m-0 focus-visible:outline-none">
+                      <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                          <Film size={14} className="text-brand-400" /> Storyboard director visual script
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => copyToClipboard(`[Hook]\n${editedHook}\n\n[Body]\n${editedBody}\n\n[CTA]\n${editedCTA}`, "script")}
+                          className="text-xs font-bold text-brand-400 hover:text-brand-300 cursor-pointer flex items-center gap-2 h-8 px-3 rounded-lg"
+                        >
+                          <Copy size={13} /> {copiedScript ? "Copied script" : "Copy Outline"}
+                        </Button>
                       </div>
-                    </div>
 
-                    {crawling ? (
-                      <div className="space-y-3">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="h-16 w-full bg-slate-800/20 animate-pulse rounded-xl" />
-                        ))}
-                      </div>
-                    ) : videos.length === 0 ? (
-                      <div className="card flex flex-col items-center py-12 bg-slate-900/10">
-                        <p className="text-xs text-slate-500">No source videos found matching filter</p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-3 max-h-[360px] overflow-y-auto pr-1">
-                        {videos.map((vid, idx) => (
-                          <div
-                            key={idx}
-                            className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-slate-950/40 border border-slate-850 rounded-xl p-3.5 transition-all hover:bg-slate-950/70 hover:border-slate-700/60"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <h4 className="text-xs font-bold text-slate-100 truncate mb-1">
-                                {vid.title}
-                              </h4>
-                              <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] text-slate-500">
-                                <span className="font-bold text-brand-400">{vid.uploader}</span>
-                                <span>&middot;</span>
-                                <span className="flex items-center gap-0.5"><Eye size={10} /> {formatViews(vid.view_count)}</span>
-                                <span>&middot;</span>
-                                <span className="flex items-center gap-0.5"><Clock size={10} /> {formatDuration(vid.duration)}</span>
+                      <div className="grid gap-6 xl:grid-cols-2">
+                        {/* Visual Timeline editor inputs */}
+                        <div className="space-y-6 bg-muted/5 border border-border/40 p-6 rounded-xl">
+                          <p className="text-xs font-bold text-foreground uppercase tracking-wider border-b border-border/40 pb-2">Timeline Segments</p>
+                          
+                          <div className="space-y-2">
+                            <span className="text-[9px] font-extrabold tracking-wider bg-rose-500/10 text-rose-400 border border-rose-500/20 px-2.5 py-1 rounded-md uppercase block w-fit">
+                              Attention Hook (0-3s)
+                            </span>
+                            <Input
+                              type="text"
+                              value={editedHook}
+                              onChange={(e) => setEditedHook(e.target.value)}
+                              className="bg-background border-border text-sm font-bold text-foreground focus-visible:ring-rose-500/40 focus:border-rose-500/40 h-10 rounded-lg"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <span className="text-[9px] font-extrabold tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded-md uppercase block w-fit">
+                              Script Narrative Body
+                            </span>
+                            <Textarea
+                              rows={8}
+                              value={editedBody}
+                              onChange={(e) => setEditedBody(e.target.value)}
+                              className="bg-background border-border text-sm font-mono leading-relaxed resize-none focus-visible:ring-purple-500/40 focus:border-purple-500/40 rounded-lg"
+                            />
+                            <p className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
+                              💡 Format cues in brackets like <code className="text-brand-400 font-mono font-bold bg-muted px-1.5 py-0.5 rounded border border-border/40">[Visual: details]</code> to color-code.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <span className="text-[9px] font-extrabold tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-1 rounded-md uppercase block w-fit">
+                              Growth Call to action
+                            </span>
+                            <Input
+                              type="text"
+                              value={editedCTA}
+                              onChange={(e) => setEditedCTA(e.target.value)}
+                              className="bg-background border-border text-sm font-bold text-emerald-400 focus-visible:ring-emerald-500/40 focus:border-emerald-500/40 h-10 rounded-lg"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Teleprompter Styled Live Preview */}
+                        <div className="space-y-4 bg-muted/5 border border-border/40 p-6 rounded-xl flex flex-col min-h-[380px]">
+                          <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Teleprompter Preview</p>
+                            <div className="flex items-center gap-1.5 bg-background border border-border/40 px-2.5 py-1 rounded-md text-[9px] text-muted-foreground font-bold">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                              Auto Scroll: On
+                            </div>
+                          </div>
+                          <div className="flex-1 w-full bg-neutral-950 border border-brand-500/20 shadow-[inset_0_2px_15px_rgba(0,0,0,0.8),_0_0_20px_rgba(99,102,241,0.05)] rounded-xl p-6 leading-loose text-base text-zinc-100 font-medium overflow-y-auto max-h-[380px] whitespace-pre-wrap font-mono">
+                            <div className="space-y-6">
+                              <div>
+                                <span className="text-[10px] font-bold text-rose-400 border border-rose-500/20 bg-rose-500/5 px-2 py-0.5 rounded mr-2 uppercase select-none">Hook</span>
+                                <span className="text-rose-300 font-bold">{editedHook}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold text-purple-400 border border-purple-500/20 bg-purple-500/5 px-2 py-0.5 rounded mr-2 uppercase select-none">Body</span>
+                                <span className="text-zinc-200">{formatScriptBody(editedBody)}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] font-bold text-emerald-400 border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 rounded mr-2 uppercase select-none">CTA</span>
+                                <span className="text-emerald-300 font-bold">{editedCTA}</span>
                               </div>
                             </div>
+                          </div>
+                        </div>
+                      </div>
+                    </TabsContent>
 
-                            <button
-                              onClick={() => handleAutoGenerate(vid.url, vid.title)}
-                              disabled={generatingId !== null}
-                              className="btn-primary py-1.5 px-3 text-[10px] font-bold shrink-0 w-full md:w-auto"
+                    {/* Channel strategy tab */}
+                    <TabsContent value="strategy" className="space-y-6 p-6 m-0 focus-visible:outline-none">
+                      <div className="grid gap-6 xl:grid-cols-2">
+                        <div className="space-y-6">
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <Layers size={14} className="text-brand-400" /> AI Growth triggers
+                            </p>
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {analysis.viral_triggers && analysis.viral_triggers.map((trigger, idx) => (
+                                <span key={idx} className="text-[10px] font-bold px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 uppercase tracking-wider shadow-sm">
+                                  {trigger}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <Users size={14} className="text-purple-400" /> Target Demographic
+                            </p>
+                            <p className="text-xs text-foreground bg-muted/10 border border-border/30 rounded-xl p-4 font-semibold leading-relaxed">
+                              {analysis.target_audience}
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <Music size={14} className="text-sky-400" /> AI Soundtrack recommendation
+                            </p>
+                            <p className="text-xs text-foreground bg-muted/10 border border-border/30 rounded-xl p-4 font-semibold leading-relaxed">
+                              {analysis.audio_music_recommendation}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <Music size={14} className="text-brand-400" /> Backing tracks shelf
+                            </p>
+                            <div className="border border-border/40 rounded-xl bg-muted/10 p-5 space-y-3">
+                              {MOCK_TRACKS.map((track) => (
+                                <div
+                                  key={track.id}
+                                  className={cn(
+                                    "flex items-center justify-between p-3.5 rounded-xl border text-xs transition-all cursor-pointer",
+                                    selectedMusicId === track.id
+                                      ? "bg-brand-500/10 border-brand-500/30 text-foreground font-bold shadow-sm"
+                                      : "bg-background border-border text-muted-foreground hover:border-border/60"
+                                  )}
+                                  onClick={() => setSelectedMusicId(track.id)}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setPlayingTrackId(playingTrackId === track.id ? null : track.id)
+                                      }}
+                                      className="h-8 w-8 rounded-lg border border-border bg-background shrink-0 flex items-center justify-center text-xs"
+                                    >
+                                      {playingTrackId === track.id ? "⏸" : "▶"}
+                                    </Button>
+                                    <div className="space-y-0.5">
+                                      <p className="font-bold flex items-center gap-2 leading-none">
+                                        {track.title}
+                                        <span className="text-[8px] bg-muted border border-border px-1.5 py-0.5 rounded text-muted-foreground font-bold">
+                                          {track.genre}
+                                        </span>
+                                      </p>
+                                      <p className="text-[9px] text-muted-foreground mt-0.5 font-normal">{track.vibe}</p>
+                                    </div>
+                                  </div>
+                                  <span className="font-mono text-[9px] text-muted-foreground">{track.duration}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                              <MessageSquare size={14} className="text-rose-400" /> Engagement Pinned Comment
+                            </p>
+                            <div className="bg-muted/10 border border-border/30 p-5 rounded-xl space-y-3">
+                              <Textarea
+                                rows={3}
+                                value={editedComment}
+                                onChange={(e) => setEditedComment(e.target.value)}
+                                className="text-xs font-semibold italic bg-background border-border focus:border-rose-500/30"
+                              />
+                              <div className="flex justify-between items-center">
+                                <span className="text-[10px] text-muted-foreground font-semibold">📍 PIN TO TOP</span>
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  onClick={() => copyToClipboard(editedComment, "comment")}
+                                  className="text-xs font-bold text-brand-400 hover:text-brand-300 cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Copy size={12} /> {copiedComment ? "Copied" : "Copy Comment"}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-bold text-foreground uppercase tracking-wider">Hashtags bank</p>
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {analysis.hashtags.map((h, i) => (
+                                <span key={i} className="text-[11px] font-bold px-3 py-1 rounded-lg bg-brand-500/10 border border-brand-500/25 text-brand-400">
+                                  #{h.replace("#", "")}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </TabsContent>
+
+                    {/* Hooks variations tab */}
+                    <TabsContent value="hooks" className="space-y-5 p-6 m-0 focus-visible:outline-none">
+                      <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-2 border-b border-border/40 pb-3">
+                        <Sparkles size={14} className="text-rose-400" /> Hook overlay title variations
+                      </p>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {analysis.hook_variations && analysis.hook_variations.map((hook, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between gap-4 bg-muted/10 border border-border/30 p-5 rounded-xl hover:bg-muted/20 transition-all"
+                          >
+                            <p className="text-xs font-bold text-foreground leading-relaxed">{hook}</p>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                navigator.clipboard.writeText(hook)
+                                setCopiedHookIdx(idx)
+                                showToast("Hook copied", "success")
+                                setTimeout(() => setCopiedHookIdx(null), 2000)
+                              }}
+                              className="text-muted-foreground hover:text-foreground shrink-0 cursor-pointer h-9 w-9 rounded-lg border border-border"
                             >
-                              {generatingId === vid.url ? (
-                                <>
-                                  <RefreshCw size={10} className="animate-spin mr-1.5" />
-                                  Ingesting...
-                                </>
+                              {copiedHookIdx === idx ? (
+                                <Check size={14} className="text-emerald-400" />
                               ) : (
-                                <>
-                                  <Play size={10} className="mr-1.5 fill-current" />
-                                  Auto-Generate
-                                </>
+                                <Copy size={14} />
                               )}
-                            </button>
+                            </Button>
                           </div>
                         ))}
                       </div>
-                    )}
+                    </TabsContent>
+
+                    {/* Footage finder tab */}
+                    <TabsContent value="footage" className="space-y-6 p-6 m-0 focus-visible:outline-none">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+                        <p className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <Globe size={14} className="text-brand-400" /> Web clip feeds search results
+                        </p>
+
+                        <div className="flex bg-muted/30 p-1 rounded-lg border border-border/60 w-fit shrink-0">
+                          {["all", "shorts", "long"].map((filter) => (
+                            <button
+                              key={filter}
+                              onClick={() => handleVideoTypeChange(filter)}
+                              className={cn(
+                                "px-3 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all cursor-pointer",
+                                videoType === filter
+                                  ? "bg-background text-foreground shadow-sm"
+                                  : "text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {filter === "all" ? "All Video" : filter === "shorts" ? "Shorts" : "Long"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {activePreviewUrl && (
+                        <Card className="border border-white/5 bg-black/95 p-5 space-y-4 animate-scale-in rounded-xl">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                              <Play size={14} className="text-brand-400 animate-pulse fill-current" /> Video Player
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setActivePreviewUrl(null)}
+                              className="text-xs font-bold text-rose-400 hover:text-rose-300 h-7 px-3 cursor-pointer rounded-lg hover:bg-white/5"
+                            >
+                              Hide Player
+                            </Button>
+                          </div>
+                          <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black border border-white/10 shadow-inner">
+                            {getYouTubeId(activePreviewUrl) ? (
+                              <iframe
+                                src={`https://www.youtube.com/embed/${getYouTubeId(activePreviewUrl)}?autoplay=1`}
+                                title="Preview Clip"
+                                className="absolute inset-0 h-full w-full border-0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+                                Preview not available for this URL format.
+                              </div>
+                            )}
+                          </div>
+                        </Card>
+                      )}
+
+                      {crawling ? (
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          {[...Array(4)].map((_, i) => (
+                            <div key={i} className="h-24 w-full bg-muted/10 animate-pulse rounded-xl border border-border/20" />
+                          ))}
+                        </div>
+                      ) : videos.length === 0 ? (
+                        <div className="text-center py-12">
+                          <p className="text-sm text-muted-foreground">No matching video clips found.</p>
+                        </div>
+                      ) : (
+                        <div className="grid gap-4 sm:grid-cols-2 max-h-[460px] overflow-y-auto pr-1">
+                          {videos.map((vid, idx) => (
+                            <div
+                              key={idx}
+                              className="flex flex-col justify-between gap-4 bg-muted/10 border border-border/30 rounded-xl p-5 hover:bg-muted/20 transition-all"
+                            >
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-bold text-foreground leading-snug line-clamp-2 mb-2">{vid.title}</h4>
+                                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
+                                  <span className="font-bold text-brand-400">{vid.uploader}</span>
+                                  <span>&bull;</span>
+                                  <span className="flex items-center gap-0.5"><Eye size={11} /> {formatViews(vid.view_count)}</span>
+                                  <span>&bull;</span>
+                                  <span className="flex items-center gap-0.5"><Clock size={11} /> {formatDuration(vid.duration)}</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 pt-3 border-t border-border/10 shrink-0 justify-end mt-2">
+                                <Button
+                                  variant={activePreviewUrl === vid.url ? "default" : "outline"}
+                                  size="sm"
+                                  onClick={() => setActivePreviewUrl(activePreviewUrl === vid.url ? null : vid.url)}
+                                  className={cn(
+                                    "text-xs font-bold h-8 border-border bg-background text-muted-foreground hover:text-foreground cursor-pointer px-4 rounded-lg",
+                                    activePreviewUrl === vid.url && "bg-brand-500/10 border-brand-500/35 text-brand-400 hover:text-brand-400"
+                                  )}
+                                >
+                                  Preview Clip
+                                </Button>
+
+                                <Button
+                                  onClick={() => handleAutoGenerate(vid.url, vid.title)}
+                                  disabled={generatingId !== null}
+                                  size="sm"
+                                  className="text-xs font-bold h-8 cursor-pointer px-4 bg-brand-500 hover:bg-brand-600 text-white rounded-lg"
+                                >
+                                  {generatingId === vid.url ? (
+                                    <>
+                                      <Loader2 size={11} className="animate-spin mr-1.5" />
+                                      Clipping...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play size={11} className="mr-1.5 fill-current" />
+                                      Auto-Generate
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </TabsContent>
                   </div>
-                )}
-
-              </div>
+                </Tabs>
+              </Card>
             </div>
-          )}
-
+          </div>
         </div>
-
-      </div>
+      )}
     </div>
   )
 }
